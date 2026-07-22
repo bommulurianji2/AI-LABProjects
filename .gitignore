@@ -1,0 +1,71 @@
+# Secrets and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.pfx
+*.key
+*.cer
+*.crt
+secrets/
+credentials/
+tokens/
+
+# Node / frontend
+node_modules/
+.next/
+out/
+dist/
+build/
+coverage/
+
+# Python / backend
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+
+# Test artefacts
+playwright-report/
+test-results/
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Generated / confidential runtime content (never committed)
+PP-SDLC-Orchestrator/00_Project_State/*
+!PP-SDLC-Orchestrator/00_Project_State/.gitkeep
+PP-SDLC-Orchestrator/05_Generated_Artefacts/*
+!PP-SDLC-Orchestrator/05_Generated_Artefacts/.gitkeep
+PP-SDLC-Orchestrator/06_Review_Comments/*
+!PP-SDLC-Orchestrator/06_Review_Comments/.gitkeep
+PP-SDLC-Orchestrator/07_Approved_Baselines/*
+!PP-SDLC-Orchestrator/07_Approved_Baselines/.gitkeep
+PP-SDLC-Orchestrator/08_Rework/*
+!PP-SDLC-Orchestrator/08_Rework/.gitkeep
+PP-SDLC-Orchestrator/09_Archive/*
+!PP-SDLC-Orchestrator/09_Archive/.gitkeep
+PP-SDLC-Orchestrator/10_HTML_Prototypes/*
+!PP-SDLC-Orchestrator/10_HTML_Prototypes/.gitkeep
+local-data/
+uploads/
+generated-documents/
+generated-artefacts/
+client-data/
+organization-confidential/
+private-reference-library/
+logs/
+tmp/
+temp/
+*.tar.gz
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
