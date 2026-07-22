@@ -1,0 +1,17 @@
+id: build
+display_name: Build Agent
+version: "0.1.0"
+kind: specialist
+phase: build
+runtime: mock
+requires_review: true
+inputs:
+  - artefact_type: governance_document
+    required: true
+outputs:
+  - artefact_type: build_review_report
+    template: 04_Templates/build_review_report.docx
+  - artefact_type: final_code_review_report
+    template: 04_Templates/final_code_review_report.docx
+skill_entry: 03_Agent_Skills/build/SKILL.md
+adapter: app.adapters.mock_agent_adapter:BuildMockAdapter
