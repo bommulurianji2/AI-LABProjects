@@ -9,6 +9,39 @@ The user asked for the remaining 7 agents to be built one after another, each wi
 merge (no per-agent confirmation), reporting back only once all are done. This section is updated
 incrementally as each agent lands; see the git log for the exact PR-per-agent boundary.
 
+**Outcome: all 7 landed (Data & Integration, Governance & Security, Build, Validation/QA, Test, Deploy,
+Hypercare & Closure), each as its own PR, each merged.** Combined with sessions 1-3, all 11 agents from
+the Version 1 frozen MVP baseline (Orchestrator + 10 specialists) now exist with a working, tested mock
+vertical slice, and the full lifecycle runs end-to-end for a project name of the user's choosing.
+
+**What this milestone does NOT mean**: every agent's mock content is deterministic placeholder text
+seeded from small fixed pools, not real analysis of real input documents — there's no live LLM behind
+any of them yet (`runtime: mock` in every manifest). No M365/Graph/SharePoint/Power Platform adapter
+exists, even mocked. No Azure AI adapter (Document Intelligence, Content Safety, PII) exists, even
+mocked. There's still no frontend. Rework is proven for one phase (Technical Design) but not exercised
+at every phase. Multi-cycle baseline history (v1.1, v2.0) is still unexercised beyond the first
+approval. See each agent's "Session N" entry above for what's specifically deferred per agent, and the
+Session 1 entry's "Deferred to later sessions" list for the cross-cutting items (frontend, M365/Azure
+adapters, Entra ID auth, the ~21 remaining data-model entities, Playwright/security/resilience test
+suites, Azure IaC) — none of that has moved.
+
+### Hypercare & Closure Agent — completed (all 11 agents now implemented)
+
+- `03_Agent_Skills/hypercare_closure/manifest.yaml` + `SKILL.md`, single output
+  `hypercare_closure_report` (Word) from `04_Templates/hypercare_closure_report.docx`.
+- `HypercareClosureMockAdapter` — hypercare plan, issue resolution, handover, lessons learned, and a
+  closure statement that explicitly confirms no unresolved critical defects before declaring closure.
+- **This is the final lifecycle phase.** `tests/integration/test_full_lifecycle_chain.py` is the capstone
+  test: drives all 10 specialist agents end-to-end (Analysis → UX Design → Technical Design →
+  Data & Integration → Governance & Security → Build → Validation/QA → Test → Deploy →
+  Hypercare & Closure), asserting `project.status` stays `"active"` through every intermediate approval
+  and only becomes `"completed"` once the Hypercare & Closure artefact itself is approved — not merely
+  from starting that final run. A second test confirms exactly the 10 expected specialist agent IDs are
+  registered with zero validation failures (the Orchestrator, by design, is not manifest-registered —
+  see `03_Agent_Skills/orchestrator/SKILL.md`).
+- **301 tests passing.** All 11 agents (Orchestrator + 10 specialists) from the Version 1 frozen MVP
+  baseline now exist with a working mock vertical slice, tested individually and as one continuous chain.
+
 ### Deploy Agent — completed
 
 - `03_Agent_Skills/deploy/manifest.yaml` + `SKILL.md`, single output `iq_document` (Word) from

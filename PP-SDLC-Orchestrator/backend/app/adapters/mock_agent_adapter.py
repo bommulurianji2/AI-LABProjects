@@ -905,3 +905,60 @@ class DeployMockAdapter:
             review_status="ready_for_review",
             execution_metrics={"seed": seed},
         )
+
+
+class HypercareClosureMockAdapter:
+    """Deterministic mock runtime for the Hypercare & Closure Agent — the
+    final lifecycle phase. Fills 04_Templates/hypercare_closure_report.docx.
+    The closure statement explicitly confirms no unresolved critical
+    defects before declaring closure, per the domain guardrail.
+    """
+
+    ARTEFACT_TYPE = "hypercare_closure_report"
+    TEMPLATE_RELATIVE_PATH = "04_Templates/hypercare_closure_report.docx"
+
+    def execute(self, request: AgentRunRequest) -> AgentRunResult:
+        settings = get_settings()
+        seed = _deterministic_seed(
+            request.project_id, request.lifecycle_phase or "hypercare_closure", str(request.run_number)
+        )
+        version_label = _version_label(request.run_number)
+        project_name = request.constraints.get("project_name", request.project_id)
+
+        doc = Document(str(REPO_ROOT / self.TEMPLATE_RELATIVE_PATH))
+        for para in doc.paragraphs:
+            if "{{PROJECT_NAME}}" in para.text:
+                para.text = para.text.replace("{{PROJECT_NAME}}", str(project_name))
+            elif "{{VERSION_LABEL}}" in para.text:
+                para.text = para.text.replace("{{VERSION_LABEL}}", version_label)
+            elif "{{HYPERCARE_PLAN}}" in para.text:
+                para.text = "Two-week hypercare window post-deployment; daily stand-up to triage any reported issues."
+            elif "{{ISSUE_RESOLUTION}}" in para.text:
+                para.text = "No issues reported during the hypercare window for this mock run."
+            elif "{{HANDOVER}}" in para.text:
+                para.text = "Operational ownership transferred to the Platform Administrator role per the Governance Document."
+            elif "{{LESSONS_LEARNED}}" in para.text:
+                para.text = "Seeding deterministic mock content early made the full orchestrated loop testable before any live model integration existed."
+            elif "{{CLOSURE_STATEMENT}}" in para.text:
+                para.text = "No unresolved critical defects — confirmed via the Test Workbook and carried forward through the IQ Document. Project is approved for closure."
+
+        output_dir = settings.generated_artefacts_dir / request.project_id / self.ARTEFACT_TYPE
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"{version_label}.docx"
+        doc.save(output_path)
+        checksum = hashlib.sha256(output_path.read_bytes()).hexdigest()
+
+        produced = ProducedArtefact(
+            artefact_type=self.ARTEFACT_TYPE,
+            stable_key=self.ARTEFACT_TYPE,
+            file_path=str(output_path),
+            checksum=checksum,
+            entities=[],
+        )
+
+        return AgentRunResult(
+            execution_summary=f"Generated {self.ARTEFACT_TYPE}.",
+            artefacts_produced=[produced],
+            review_status="ready_for_review",
+            execution_metrics={"seed": seed},
+        )

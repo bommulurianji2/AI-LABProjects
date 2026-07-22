@@ -1,0 +1,15 @@
+id: hypercare_closure
+display_name: Hypercare & Closure Agent
+version: "0.1.0"
+kind: specialist
+phase: hypercare_closure
+runtime: mock
+requires_review: true
+inputs:
+  - artefact_type: iq_document
+    required: true
+outputs:
+  - artefact_type: hypercare_closure_report
+    template: 04_Templates/hypercare_closure_report.docx
+skill_entry: 03_Agent_Skills/hypercare_closure/SKILL.md
+adapter: app.adapters.mock_agent_adapter:HypercareClosureMockAdapter
