@@ -11,13 +11,14 @@ secrets/
 credentials/
 tokens/
 
-# Node / frontend
+# Node / frontend (scoped to frontend/ so generic names like "build" don't
+# collide with unrelated folders elsewhere in the tree, e.g. 03_Agent_Skills/build)
 node_modules/
-.next/
-out/
-dist/
-build/
-coverage/
+frontend/.next/
+frontend/out/
+frontend/dist/
+frontend/build/
+frontend/coverage/
 
 # Python / backend
 __pycache__/
