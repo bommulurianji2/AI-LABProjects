@@ -9,6 +9,19 @@ The user asked for the remaining 7 agents to be built one after another, each wi
 merge (no per-agent confirmation), reporting back only once all are done. This section is updated
 incrementally as each agent lands; see the git log for the exact PR-per-agent boundary.
 
+### Test Agent — completed
+
+- `03_Agent_Skills/test/manifest.yaml` + `SKILL.md`, single output `test_workbook` — **Excel**, not
+  Word, exercising the `openpyxl` generation path for the first time (per authoritative artefact set item
+  13). Template `04_Templates/test_workbook.xlsx` has three sheets: `Test Cases`, `Summary` (with real
+  `COUNTA`/`COUNTIF` formulas, not just static text), `Defects`.
+- `TestAgentMockAdapter` — seeds 3 OQ/SIT/PQ/UAT test cases with stable `TC-00N` IDs, each tracing to an
+  upstream entity, all `Passed`, zero defects.
+- Chain extended to eight phases; unlocks `deploy` on approval. Test coverage explicitly opens the
+  generated `.xlsx` with `openpyxl` and asserts sheet names, headers, row data, and the summary formula
+  string — not just that a file exists. Tests: `test_test_agent_registration.py`,
+  `test_test_agent_chain.py`. 296 tests passing.
+
 ### Validation / QA Agent — completed
 
 - `03_Agent_Skills/validation_qa/manifest.yaml` + `SKILL.md`, single output `validation_report` (Word)

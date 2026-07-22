@@ -1,0 +1,15 @@
+id: test
+display_name: Test Agent
+version: "0.1.0"
+kind: specialist
+phase: test
+runtime: mock
+requires_review: true
+inputs:
+  - artefact_type: validation_report
+    required: true
+outputs:
+  - artefact_type: test_workbook
+    template: 04_Templates/test_workbook.xlsx
+skill_entry: 03_Agent_Skills/test/SKILL.md
+adapter: app.adapters.mock_agent_adapter:TestAgentMockAdapter
