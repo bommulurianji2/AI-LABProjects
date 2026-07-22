@@ -82,6 +82,29 @@ DEPENDENCY_POOL = [
     "Depends on Power Platform environment provisioning being complete before Build starts.",
 ]
 
+DATAVERSE_ENTITY_POOL = [
+    ("Request", "Core transactional table holding one row per submitted request."),
+    ("RequestLine", "Child table for multi-line requests; relates 1:N to Request."),
+    ("Approval", "Records each approval decision against a Request."),
+    ("Attachment", "Stores metadata for files attached to a Request (content in SharePoint)."),
+]
+
+RELATIONSHIP_POOL = [
+    "Request (1) -> RequestLine (N): a request may contain multiple line items.",
+    "Request (1) -> Approval (N): a request accumulates one approval record per approver.",
+    "Request (1) -> Attachment (N): a request may carry multiple supporting attachments.",
+]
+
+EXTERNAL_SOURCE_POOL = [
+    "Employee directory sourced from Microsoft Entra ID via Microsoft Graph (read-only).",
+    "Cost center reference data sourced from the finance system via a nightly export, not real-time.",
+]
+
+CONNECTOR_POOL = [
+    "Custom connector wrapping the finance system's REST API; no direct HTTP calls from flows.",
+    "Standard SharePoint connector for attachment storage; Dataverse remains the system of record for metadata.",
+]
+
 
 def _deterministic_seed(*parts: str) -> int:
     digest = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
@@ -426,4 +449,84 @@ class TechnicalDesignMockAdapter:
             file_path=str(output_path),
             checksum=checksum,
             entities=[],
+        )
+
+
+class DataIntegrationMockAdapter:
+    """Deterministic mock runtime for the Data & Integration Agent.
+
+    Fills 04_Templates/data_design_document.docx with a seeded Dataverse
+    schema, relationships, external-source mapping, and connector design.
+    """
+
+    ARTEFACT_TYPE = "data_design_document"
+    TEMPLATE_RELATIVE_PATH = "04_Templates/data_design_document.docx"
+
+    def execute(self, request: AgentRunRequest) -> AgentRunResult:
+        settings = get_settings()
+        seed = _deterministic_seed(
+            request.project_id, request.lifecycle_phase or "data_integration", str(request.run_number)
+        )
+        version_label = _version_label(request.run_number)
+        project_name = request.constraints.get("project_name", request.project_id)
+
+        entity_count = 3
+        e_start = seed % len(DATAVERSE_ENTITY_POOL)
+        entities_chosen = [
+            DATAVERSE_ENTITY_POOL[(e_start + i) % len(DATAVERSE_ENTITY_POOL)] for i in range(entity_count)
+        ]
+        data_entities = [f"DATA-{i + 1:03d}" for i in range(entity_count)]
+
+        rel_start = seed % len(RELATIONSHIP_POOL)
+        relationships = [RELATIONSHIP_POOL[(rel_start + i) % len(RELATIONSHIP_POOL)] for i in range(2)]
+
+        doc = Document(str(REPO_ROOT / self.TEMPLATE_RELATIVE_PATH))
+        entity_lines = [
+            f"{eid}: {name} — {desc}" for eid, (name, desc) in zip(data_entities, entities_chosen, strict=True)
+        ]
+        for para in doc.paragraphs:
+            if "{{PROJECT_NAME}}" in para.text:
+                para.text = para.text.replace("{{PROJECT_NAME}}", str(project_name))
+            elif "{{VERSION_LABEL}}" in para.text:
+                para.text = para.text.replace("{{VERSION_LABEL}}", version_label)
+            elif "{{DATAVERSE_SCHEMA}}" in para.text:
+                para.text = ""
+                for line in entity_lines:
+                    doc.add_paragraph(line)
+            elif "{{RELATIONSHIPS}}" in para.text:
+                para.text = ""
+                for rel in relationships:
+                    doc.add_paragraph(rel)
+            elif "{{EXTERNAL_SOURCES}}" in para.text:
+                para.text = ""
+                for src in EXTERNAL_SOURCE_POOL:
+                    doc.add_paragraph(src)
+            elif "{{CONNECTORS}}" in para.text:
+                para.text = ""
+                for conn in CONNECTOR_POOL:
+                    doc.add_paragraph(conn)
+            elif "{{DATA_MIGRATION}}" in para.text:
+                para.text = "No legacy data migration in scope for this mock run."
+            elif "{{REPORTING_MODEL}}" in para.text:
+                para.text = "Power BI reporting deferred until reporting requirements are confirmed."
+
+        output_dir = settings.generated_artefacts_dir / request.project_id / self.ARTEFACT_TYPE
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"{version_label}.docx"
+        doc.save(output_path)
+        checksum = hashlib.sha256(output_path.read_bytes()).hexdigest()
+
+        produced = ProducedArtefact(
+            artefact_type=self.ARTEFACT_TYPE,
+            stable_key=self.ARTEFACT_TYPE,
+            file_path=str(output_path),
+            checksum=checksum,
+            entities=data_entities,
+        )
+
+        return AgentRunResult(
+            execution_summary=f"Generated {self.ARTEFACT_TYPE} with {entity_count} seeded Dataverse entities.",
+            artefacts_produced=[produced],
+            review_status="ready_for_review",
+            execution_metrics={"seed": seed, "entity_count": entity_count},
         )

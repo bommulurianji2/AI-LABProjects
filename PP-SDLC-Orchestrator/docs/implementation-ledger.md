@@ -3,6 +3,22 @@
 Living record of what's done, tested, deferred, and blocked. Update this every session — do not let it
 go stale.
 
+## Session 4 — 2026-07-22
+
+The user asked for the remaining 7 agents to be built one after another, each with an automatic PR and
+merge (no per-agent confirmation), reporting back only once all are done. This section is updated
+incrementally as each agent lands; see the git log for the exact PR-per-agent boundary.
+
+### Data & Integration Agent — completed
+
+- `03_Agent_Skills/data_integration/manifest.yaml` + `SKILL.md`, single output `data_design_document`
+  (Word) from `04_Templates/data_design_document.docx`.
+- `DataIntegrationMockAdapter` — seeded Dataverse schema entries with stable `DATA-00N` IDs,
+  relationships, external-source mapping, and connector design.
+- Chain extended to four phases: ... → Technical Design → Data & Integration → unlocks
+  `governance_security`. Tests: `test_data_integration_registration.py`,
+  `test_data_integration_chain.py`. 288 tests passing.
+
 ## Session 3 — 2026-07-22
 
 ### Completed
