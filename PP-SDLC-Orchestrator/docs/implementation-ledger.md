@@ -9,6 +9,15 @@ The user asked for the remaining 7 agents to be built one after another, each wi
 merge (no per-agent confirmation), reporting back only once all are done. This section is updated
 incrementally as each agent lands; see the git log for the exact PR-per-agent boundary.
 
+### Governance & Security Agent — completed
+
+- `03_Agent_Skills/governance_security/manifest.yaml` + `SKILL.md`, single output `governance_document`
+  (Word) from `04_Templates/governance_document.docx`.
+- `GovernanceSecurityMockAdapter` — seeded identity/permissions defaults (least privilege, delegated over
+  application permissions), DLP classification, licensing, and audit-log-backed audit requirements.
+- Chain extended to five phases; unlocks `build` on approval. Tests:
+  `test_governance_security_registration.py`, `test_governance_security_chain.py`. 290 tests passing.
+
 ### Data & Integration Agent — completed
 
 - `03_Agent_Skills/data_integration/manifest.yaml` + `SKILL.md`, single output `data_design_document`
