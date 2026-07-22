@@ -1,0 +1,17 @@
+id: ux_design
+display_name: UX Design Agent
+version: "0.1.0"
+kind: specialist
+phase: ux_design
+runtime: mock
+requires_review: true
+inputs:
+  - artefact_type: requirement_specification
+    required: true
+outputs:
+  - artefact_type: ux_design_specification
+    template: 04_Templates/ux_design_specification.docx
+  - artefact_type: ux_interactive_prototype
+    template: 04_Templates/ux_interactive_prototype.html
+skill_entry: 03_Agent_Skills/ux_design/SKILL.md
+adapter: app.adapters.mock_agent_adapter:UxDesignMockAdapter

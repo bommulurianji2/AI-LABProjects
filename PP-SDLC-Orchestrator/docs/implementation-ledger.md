@@ -3,6 +3,49 @@
 Living record of what's done, tested, deferred, and blocked. Update this every session — do not let it
 go stale.
 
+## Session 2 — 2026-07-22
+
+### Completed
+
+- Second specialist agent: **UX Design Agent** (`03_Agent_Skills/ux_design/manifest.yaml` + `SKILL.md`),
+  producing two artefacts per run — `ux_design_specification` (Word) and `ux_interactive_prototype`
+  (HTML, kept as HTML per the frozen MVP baseline, never folded into the Word doc). New template files:
+  `04_Templates/ux_design_specification.docx`, `04_Templates/ux_interactive_prototype.html`.
+- `UxDesignMockAdapter` (`backend/app/adapters/mock_agent_adapter.py`) — deterministic seeded personas,
+  journeys, and a screen inventory with stable `SCR-00N` IDs shared across both artefacts.
+- User-supplied `project_name` is HTML-escaped before being embedded in the generated prototype —
+  otherwise a project name like `<script>...</script>` would be live markup in a file meant to be opened
+  in a browser. Covered by a dedicated XSS test.
+- **Bug found and fixed**: `OrchestratorService.submit_review` only promoted the *most recent*
+  `ArtefactVersion` for a run to baseline on approval — correct when a run produces exactly one
+  artefact (Analysis), silently wrong once a run produces more than one (UX Design's spec + prototype
+  would have left the prototype stuck at `draft`/`v0.1` forever). Fixed to iterate every
+  `ArtefactVersion` belonging to the run.
+- Full two-phase chain proven end-to-end at the service layer: Analysis approved → UX Design run
+  (both artefacts generated, real docx + real html) → both approved → phase unlocks to
+  `technical_design`.
+- Ledger, this entry.
+
+### Tests executed (all passing — 283 tests, 3 new)
+
+- `tests/unit/test_ux_design_registration.py` — manifest registers cleanly from the real skills dir with
+  both declared outputs.
+- `tests/integration/test_two_phase_chain.py` — the Analysis → UX Design chain (both artefacts
+  generated, correct content, both promoted to `v1.0`/`baseline` on approval, phase advances to
+  `technical_design`), and a dedicated test that a malicious project name (`<script>...`,
+  `<img onerror=...>`) is escaped in the generated HTML prototype rather than surviving as live markup.
+
+### Remaining agent backlog (updated)
+
+Analysis and UX Design are done. Still stub-only: Technical Design, Data & Integration, Governance &
+Security, Build, Validation/QA, Test, Deploy, Hypercare & Closure (8 agents).
+
+### Repo / branch state
+
+Work done on `feature/ux-design-agent`, branched from `main` after session 1's
+`feature/initial-build` was merged (PR #1) and the repo made public per the original spec. Not yet
+merged — ask before merging, per this session's established pattern.
+
 ## Session 1 — 2026-07-22
 
 ### Completed
