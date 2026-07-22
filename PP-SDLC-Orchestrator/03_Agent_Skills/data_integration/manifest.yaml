@@ -1,0 +1,15 @@
+id: data_integration
+display_name: Data & Integration Agent
+version: "0.1.0"
+kind: specialist
+phase: data_integration
+runtime: mock
+requires_review: true
+inputs:
+  - artefact_type: solution_approach
+    required: true
+outputs:
+  - artefact_type: data_design_document
+    template: 04_Templates/data_design_document.docx
+skill_entry: 03_Agent_Skills/data_integration/SKILL.md
+adapter: app.adapters.mock_agent_adapter:DataIntegrationMockAdapter
