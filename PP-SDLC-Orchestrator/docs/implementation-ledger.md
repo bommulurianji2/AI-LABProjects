@@ -9,6 +9,15 @@ The user asked for the remaining 7 agents to be built one after another, each wi
 merge (no per-agent confirmation), reporting back only once all are done. This section is updated
 incrementally as each agent lands; see the git log for the exact PR-per-agent boundary.
 
+### Validation / QA Agent — completed
+
+- `03_Agent_Skills/validation_qa/manifest.yaml` + `SKILL.md`, single output `validation_report` (Word)
+  from `04_Templates/validation_report.docx`.
+- `ValidationQaMockAdapter` — seeded standards-check findings each citing an upstream entity, plus an
+  overall "pass with findings" verdict.
+- Chain extended to seven phases; unlocks `test` on approval. Tests: `test_validation_qa_registration.py`,
+  `test_validation_qa_chain.py`. 294 tests passing.
+
 ### Build Agent — completed
 
 - `03_Agent_Skills/build/manifest.yaml` + `SKILL.md`, two outputs — `build_review_report` and

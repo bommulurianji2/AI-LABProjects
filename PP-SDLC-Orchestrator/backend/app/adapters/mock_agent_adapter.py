@@ -122,6 +122,12 @@ BUILD_FINDING_POOL = [
     "Custom connector for the finance system (per ADR-002) not yet configured with retry/backoff.",
 ]
 
+VALIDATION_FINDING_POOL = [
+    "Accessibility check on the Request Form (SCR-002): confirm keyboard focus order matches visual order.",
+    "Naming convention check: confirm all Dataverse entities follow the agreed prefix per DATA-001.",
+    "Traceability check: confirm every DEF-00N from the Build Review Report has a corresponding fix entry.",
+]
+
 
 def _deterministic_seed(*parts: str) -> int:
     digest = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
@@ -723,4 +729,67 @@ class BuildMockAdapter:
             file_path=str(output_path),
             checksum=checksum,
             entities=list(defect_entities),
+        )
+
+
+class ValidationQaMockAdapter:
+    """Deterministic mock runtime for the Validation / QA Agent.
+
+    Fills 04_Templates/validation_report.docx with seeded standards-check
+    findings, each citing an upstream entity, plus an overall verdict.
+    """
+
+    ARTEFACT_TYPE = "validation_report"
+    TEMPLATE_RELATIVE_PATH = "04_Templates/validation_report.docx"
+
+    def execute(self, request: AgentRunRequest) -> AgentRunResult:
+        settings = get_settings()
+        seed = _deterministic_seed(
+            request.project_id, request.lifecycle_phase or "validation_qa", str(request.run_number)
+        )
+        version_label = _version_label(request.run_number)
+        project_name = request.constraints.get("project_name", request.project_id)
+
+        finding_count = 2
+        f_start = seed % len(VALIDATION_FINDING_POOL)
+        findings = [
+            VALIDATION_FINDING_POOL[(f_start + i) % len(VALIDATION_FINDING_POOL)] for i in range(finding_count)
+        ]
+
+        doc = Document(str(REPO_ROOT / self.TEMPLATE_RELATIVE_PATH))
+        for para in doc.paragraphs:
+            if "{{PROJECT_NAME}}" in para.text:
+                para.text = para.text.replace("{{PROJECT_NAME}}", str(project_name))
+            elif "{{VERSION_LABEL}}" in para.text:
+                para.text = para.text.replace("{{VERSION_LABEL}}", version_label)
+            elif "{{VALIDATION_SCOPE}}" in para.text:
+                para.text = "Independent validation of all approved design and build artefacts for this project."
+            elif "{{STANDARDS_ASSESSMENT}}" in para.text:
+                para.text = "Assessed against accessibility, naming convention, and traceability standards."
+            elif "{{VALIDATION_FINDINGS}}" in para.text:
+                para.text = ""
+                for finding in findings:
+                    doc.add_paragraph(finding)
+            elif "{{OVERALL_VERDICT}}" in para.text:
+                para.text = "Pass with findings — see above; no critical defects block progression."
+
+        output_dir = settings.generated_artefacts_dir / request.project_id / self.ARTEFACT_TYPE
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"{version_label}.docx"
+        doc.save(output_path)
+        checksum = hashlib.sha256(output_path.read_bytes()).hexdigest()
+
+        produced = ProducedArtefact(
+            artefact_type=self.ARTEFACT_TYPE,
+            stable_key=self.ARTEFACT_TYPE,
+            file_path=str(output_path),
+            checksum=checksum,
+            entities=[],
+        )
+
+        return AgentRunResult(
+            execution_summary=f"Generated {self.ARTEFACT_TYPE} with {finding_count} seeded findings.",
+            artefacts_produced=[produced],
+            review_status="ready_for_review",
+            execution_metrics={"seed": seed, "finding_count": finding_count},
         )
