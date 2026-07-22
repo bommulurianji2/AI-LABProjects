@@ -1,0 +1,15 @@
+id: analysis
+display_name: Analysis Agent
+version: "0.1.0"
+kind: specialist
+phase: analysis
+runtime: mock
+requires_review: true
+inputs:
+  - artefact_type: high_level_requirement
+    required: true
+outputs:
+  - artefact_type: requirement_specification
+    template: 04_Templates/requirement_specification.docx
+skill_entry: 03_Agent_Skills/analysis/SKILL.md
+adapter: app.adapters.mock_agent_adapter:AnalysisMockAdapter
