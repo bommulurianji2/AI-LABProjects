@@ -9,6 +9,17 @@ The user asked for the remaining 7 agents to be built one after another, each wi
 merge (no per-agent confirmation), reporting back only once all are done. This section is updated
 incrementally as each agent lands; see the git log for the exact PR-per-agent boundary.
 
+### Deploy Agent — completed
+
+- `03_Agent_Skills/deploy/manifest.yaml` + `SKILL.md`, single output `iq_document` (Word) from
+  `04_Templates/iq_document.docx`.
+- `DeployMockAdapter` — states the zero-open-defects pre-deployment check explicitly (encoding the
+  "must not deploy unapproved or failed components" guardrail as content, even though there's no live
+  defect-count check wired yet — see deferred items) before describing deployment configuration,
+  rollback plan, and evidence.
+- Chain extended to nine phases; unlocks `hypercare_closure` on approval. Tests:
+  `test_deploy_registration.py`, `test_deploy_chain.py`. 298 tests passing.
+
 ### Test Agent — completed
 
 - `03_Agent_Skills/test/manifest.yaml` + `SKILL.md`, single output `test_workbook` — **Excel**, not

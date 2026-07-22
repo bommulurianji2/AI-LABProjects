@@ -849,3 +849,59 @@ class TestAgentMockAdapter:
             review_status="ready_for_review",
             execution_metrics={"seed": seed, "case_count": case_count},
         )
+
+
+class DeployMockAdapter:
+    """Deterministic mock runtime for the Deploy Agent.
+
+    Fills 04_Templates/iq_document.docx. The mock assumes the upstream Test
+    Workbook showed zero open defects (true for every run in this session's
+    mock chain) and states that check explicitly before describing
+    deployment steps — per the "must not deploy unapproved or failed
+    components" guardrail.
+    """
+
+    ARTEFACT_TYPE = "iq_document"
+    TEMPLATE_RELATIVE_PATH = "04_Templates/iq_document.docx"
+
+    def execute(self, request: AgentRunRequest) -> AgentRunResult:
+        settings = get_settings()
+        seed = _deterministic_seed(request.project_id, request.lifecycle_phase or "deploy", str(request.run_number))
+        version_label = _version_label(request.run_number)
+        project_name = request.constraints.get("project_name", request.project_id)
+
+        doc = Document(str(REPO_ROOT / self.TEMPLATE_RELATIVE_PATH))
+        for para in doc.paragraphs:
+            if "{{PROJECT_NAME}}" in para.text:
+                para.text = para.text.replace("{{PROJECT_NAME}}", str(project_name))
+            elif "{{VERSION_LABEL}}" in para.text:
+                para.text = para.text.replace("{{VERSION_LABEL}}", version_label)
+            elif "{{DEPLOYMENT_CONFIGURATION}}" in para.text:
+                para.text = "Solution deployed via Power Platform CLI import into the target environment, driven by the approved connection references and environment variables."
+            elif "{{PRE_DEPLOYMENT_VERIFICATION}}" in para.text:
+                para.text = "Verified: the Test Workbook's Defects sheet shows zero open defects for this version. Deployment does not proceed if this check fails."
+            elif "{{ROLLBACK_PLAN}}" in para.text:
+                para.text = "Prior solution version remains installed and can be re-activated; no destructive schema changes are applied without a separate approved migration step."
+            elif "{{DEPLOYMENT_EVIDENCE}}" in para.text:
+                para.text = "Deployment evidence (solution import log, environment snapshot) is attached per the organization's evidence retention policy."
+
+        output_dir = settings.generated_artefacts_dir / request.project_id / self.ARTEFACT_TYPE
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"{version_label}.docx"
+        doc.save(output_path)
+        checksum = hashlib.sha256(output_path.read_bytes()).hexdigest()
+
+        produced = ProducedArtefact(
+            artefact_type=self.ARTEFACT_TYPE,
+            stable_key=self.ARTEFACT_TYPE,
+            file_path=str(output_path),
+            checksum=checksum,
+            entities=[],
+        )
+
+        return AgentRunResult(
+            execution_summary=f"Generated {self.ARTEFACT_TYPE}.",
+            artefacts_produced=[produced],
+            review_status="ready_for_review",
+            execution_metrics={"seed": seed},
+        )
