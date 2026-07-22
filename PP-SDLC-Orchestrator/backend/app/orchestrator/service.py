@@ -171,14 +171,17 @@ class OrchestratorService:
         }[decision]
         run.state = transition_run(RunState.IN_REVIEW, target, review_decision=decision).value
 
-        latest_version = (
+        # A run can produce more than one artefact (e.g. the UX Design Agent's
+        # spec + prototype) — every version this run produced gets its own
+        # Review row and, on approval, is promoted, not just the most recent.
+        versions_from_run = (
             self.session.query(ArtefactVersion)
             .filter_by(run_id=run.id)
-            .order_by(ArtefactVersion.created_at.desc())
-            .first()
+            .order_by(ArtefactVersion.created_at.asc())
+            .all()
         )
-        if latest_version is not None:
-            review = Review(artefact_version_id=latest_version.id, reviewer_id=reviewer_id, decision=decision.value)
+        for version in versions_from_run:
+            review = Review(artefact_version_id=version.id, reviewer_id=reviewer_id, decision=decision.value)
             self.session.add(review)
             self.session.commit()
             for comment in comments or []:
@@ -188,8 +191,8 @@ class OrchestratorService:
                 # Session-1 scope: promote the first approved draft directly to the
                 # v1.0 baseline in place. Multi-cycle baseline history (v1.1, v2.0
                 # via copy-on-approve) is deferred — see implementation ledger.
-                latest_version.status = ArtefactVersionStatus.BASELINE.value
-                latest_version.version_label = "v1.0"
+                version.status = ArtefactVersionStatus.BASELINE.value
+                version.version_label = "v1.0"
 
         self._log_event(run, "review_decided", f'{{"decision": "{decision.value}"}}')
 
