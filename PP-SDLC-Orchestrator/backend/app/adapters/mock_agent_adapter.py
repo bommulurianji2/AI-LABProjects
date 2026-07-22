@@ -41,6 +41,47 @@ SCREEN_POOL = [
     ("Approvals Queue", "List of items awaiting the current user's decision."),
 ]
 
+ARCHITECTURE_OPTION_POOL = [
+    (
+        "Single-tenant Power Platform environment",
+        "Simple to govern, but limits reuse of components across projects.",
+    ),
+    (
+        "Shared Power Platform environment with solution layering",
+        "Better reuse, but requires stricter ALM discipline to avoid cross-solution breakage.",
+    ),
+    (
+        "Hybrid: Power Platform frontend with Azure backend services",
+        "More flexible integration surface, but higher operational and cost complexity.",
+    ),
+]
+
+ADR_POOL = [
+    "Use a shared Dataverse environment with solution-based ALM for this delivery.",
+    "Expose external integrations through a dedicated custom connector rather than direct HTTP calls "
+    "from Power Automate.",
+    "Keep all AI model calls behind a provider abstraction so the model can be swapped without "
+    "touching business logic.",
+    "Model the interactive HTML prototype as a standalone artefact, never embedded inside a Word "
+    "document.",
+]
+
+RISK_POOL = [
+    "Underestimating Dataverse API request limits during peak usage.",
+    "Vendor lock-in if the AI provider abstraction is bypassed by a specialist agent.",
+    "Schema drift between the future Data Design Document and the actual Dataverse solution.",
+]
+
+LIMITATION_POOL = [
+    "This document does not cover detailed data schema — see the Data Design Document.",
+    "This document does not cover security or compliance controls — see the Governance Document.",
+]
+
+DEPENDENCY_POOL = [
+    "Depends on the approved UX Design Specification for screen and navigation scope.",
+    "Depends on Power Platform environment provisioning being complete before Build starts.",
+]
+
 
 def _deterministic_seed(*parts: str) -> int:
     digest = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
@@ -250,4 +291,139 @@ class UxDesignMockAdapter:
             file_path=str(prototype_path),
             checksum=checksum,
             entities=list(screen_entities),
+        )
+
+
+class TechnicalDesignMockAdapter:
+    """Deterministic mock runtime for the Technical Design Agent.
+
+    Produces two artefacts per run: the Solution Approach Document and the
+    Architecture Handbook — both Word, per the authoritative artefact set.
+    """
+
+    SOLUTION_APPROACH_ARTEFACT_TYPE = "solution_approach"
+    ARCHITECTURE_HANDBOOK_ARTEFACT_TYPE = "architecture_handbook"
+    SOLUTION_APPROACH_TEMPLATE_RELATIVE_PATH = "04_Templates/solution_approach.docx"
+    ARCHITECTURE_HANDBOOK_TEMPLATE_RELATIVE_PATH = "04_Templates/architecture_handbook.docx"
+
+    def execute(self, request: AgentRunRequest) -> AgentRunResult:
+        settings = get_settings()
+        seed = _deterministic_seed(
+            request.project_id, request.lifecycle_phase or "technical_design", str(request.run_number)
+        )
+        version_label = _version_label(request.run_number)
+        project_name = request.constraints.get("project_name", request.project_id)
+
+        o_start = seed % len(ARCHITECTURE_OPTION_POOL)
+        options = [ARCHITECTURE_OPTION_POOL[(o_start + i) % len(ARCHITECTURE_OPTION_POOL)] for i in range(2)]
+
+        adr_count = 3
+        a_start = seed % len(ADR_POOL)
+        decisions = [ADR_POOL[(a_start + i) % len(ADR_POOL)] for i in range(adr_count)]
+        adr_entities = [f"ADR-{i + 1:03d}" for i in range(adr_count)]
+
+        r_start = seed % len(RISK_POOL)
+        risks = [RISK_POOL[(r_start + i) % len(RISK_POOL)] for i in range(2)]
+
+        output_dir = settings.generated_artefacts_dir / request.project_id
+        solution_approach_produced = self._render_solution_approach(
+            project_name, version_label, options, decisions, adr_entities, risks, output_dir
+        )
+        architecture_handbook_produced = self._render_architecture_handbook(
+            project_name, version_label, output_dir
+        )
+
+        return AgentRunResult(
+            execution_summary=(
+                f"Generated {self.SOLUTION_APPROACH_ARTEFACT_TYPE} and "
+                f"{self.ARCHITECTURE_HANDBOOK_ARTEFACT_TYPE} with {adr_count} seeded architecture decisions."
+            ),
+            artefacts_produced=[solution_approach_produced, architecture_handbook_produced],
+            review_status="ready_for_review",
+            execution_metrics={"seed": seed, "adr_count": adr_count},
+        )
+
+    def _render_solution_approach(
+        self, project_name, version_label, options, decisions, adr_entities, risks, output_dir
+    ):
+        doc = Document(str(REPO_ROOT / self.SOLUTION_APPROACH_TEMPLATE_RELATIVE_PATH))
+        decision_lines = [
+            f"{eid}: {text}" for eid, text in zip(adr_entities, decisions, strict=True)
+        ]
+        for para in doc.paragraphs:
+            if "{{PROJECT_NAME}}" in para.text:
+                para.text = para.text.replace("{{PROJECT_NAME}}", str(project_name))
+            elif "{{VERSION_LABEL}}" in para.text:
+                para.text = para.text.replace("{{VERSION_LABEL}}", version_label)
+            elif "{{OPTION_ANALYSIS}}" in para.text:
+                para.text = ""
+                for name, tradeoff in options:
+                    doc.add_paragraph(f"Option — {name}: {tradeoff}")
+                doc.add_paragraph(f"Recommended: {options[0][0]}")
+            elif "{{ARCHITECTURE_DECISIONS}}" in para.text:
+                para.text = ""
+                for line in decision_lines:
+                    doc.add_paragraph(line)
+            elif "{{RISKS}}" in para.text:
+                para.text = ""
+                for risk in risks:
+                    doc.add_paragraph(risk)
+            elif "{{LIMITATIONS}}" in para.text:
+                para.text = ""
+                for limitation in LIMITATION_POOL:
+                    doc.add_paragraph(limitation)
+            elif "{{DEPENDENCIES}}" in para.text:
+                para.text = ""
+                for dependency in DEPENDENCY_POOL:
+                    doc.add_paragraph(dependency)
+
+        output_path_dir = output_dir / self.SOLUTION_APPROACH_ARTEFACT_TYPE
+        output_path_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_path_dir / f"{version_label}.docx"
+        doc.save(output_path)
+        checksum = hashlib.sha256(output_path.read_bytes()).hexdigest()
+
+        return ProducedArtefact(
+            artefact_type=self.SOLUTION_APPROACH_ARTEFACT_TYPE,
+            stable_key=self.SOLUTION_APPROACH_ARTEFACT_TYPE,
+            file_path=str(output_path),
+            checksum=checksum,
+            entities=list(adr_entities),
+        )
+
+    def _render_architecture_handbook(self, project_name, version_label, output_dir):
+        doc = Document(str(REPO_ROOT / self.ARCHITECTURE_HANDBOOK_TEMPLATE_RELATIVE_PATH))
+        for para in doc.paragraphs:
+            if "{{PROJECT_NAME}}" in para.text:
+                para.text = para.text.replace("{{PROJECT_NAME}}", str(project_name))
+            elif "{{VERSION_LABEL}}" in para.text:
+                para.text = para.text.replace("{{VERSION_LABEL}}", version_label)
+            elif "{{LOGICAL_ARCHITECTURE}}" in para.text:
+                para.text = (
+                    "Power Platform canvas/model-driven app frontend, Dataverse as the system of "
+                    "record, Power Automate for workflow orchestration."
+                )
+            elif "{{INTEGRATION_OVERVIEW}}" in para.text:
+                para.text = (
+                    "External systems are integrated via dedicated custom connectors; no direct "
+                    "HTTP calls from flows to third-party APIs."
+                )
+            elif "{{INFRASTRUCTURE_OVERVIEW}}" in para.text:
+                para.text = (
+                    "Dev/test/prod Power Platform environments with solution-based ALM; Azure "
+                    "services (if any) sit behind the same connector layer."
+                )
+
+        output_path_dir = output_dir / self.ARCHITECTURE_HANDBOOK_ARTEFACT_TYPE
+        output_path_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_path_dir / f"{version_label}.docx"
+        doc.save(output_path)
+        checksum = hashlib.sha256(output_path.read_bytes()).hexdigest()
+
+        return ProducedArtefact(
+            artefact_type=self.ARCHITECTURE_HANDBOOK_ARTEFACT_TYPE,
+            stable_key=self.ARCHITECTURE_HANDBOOK_ARTEFACT_TYPE,
+            file_path=str(output_path),
+            checksum=checksum,
+            entities=[],
         )

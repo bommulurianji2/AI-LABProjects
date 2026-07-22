@@ -1,0 +1,17 @@
+id: technical_design
+display_name: Technical Design Agent
+version: "0.1.0"
+kind: specialist
+phase: technical_design
+runtime: mock
+requires_review: true
+inputs:
+  - artefact_type: ux_design_specification
+    required: true
+outputs:
+  - artefact_type: solution_approach
+    template: 04_Templates/solution_approach.docx
+  - artefact_type: architecture_handbook
+    template: 04_Templates/architecture_handbook.docx
+skill_entry: 03_Agent_Skills/technical_design/SKILL.md
+adapter: app.adapters.mock_agent_adapter:TechnicalDesignMockAdapter

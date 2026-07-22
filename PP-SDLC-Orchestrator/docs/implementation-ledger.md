@@ -3,6 +3,40 @@
 Living record of what's done, tested, deferred, and blocked. Update this every session — do not let it
 go stale.
 
+## Session 3 — 2026-07-22
+
+### Completed
+
+- Third specialist agent: **Technical Design Agent** (`03_Agent_Skills/technical_design/manifest.yaml` +
+  `SKILL.md`), producing two Word artefacts per run — `solution_approach` and `architecture_handbook` —
+  matching the authoritative artefact set (items 6 and 7). New templates:
+  `04_Templates/solution_approach.docx`, `04_Templates/architecture_handbook.docx`.
+- `TechnicalDesignMockAdapter` — deterministic seeded option analysis (with an explicit recommendation),
+  architecture decisions with stable `ADR-00N` IDs, risks, limitations, and dependencies.
+- Added `tests/helpers.py` (`make_orchestrator`, `run_phase_to_approval`) to stop re-deriving the same
+  create/run/review boilerplate in every new chain test as the agent count grows.
+- Chain now proven three phases deep: Analysis → UX Design → Technical Design → unlocks
+  `data_integration`, both Technical Design artefacts correctly promoted to baseline. Also added a
+  rejection-path test at this phase (confirms the project stays on `technical_design`, `pending`, ready
+  for a fresh run).
+
+### Tests executed (all passing — 286 tests, 3 new)
+
+- `tests/unit/test_technical_design_registration.py` — manifest registers with both declared outputs.
+- `tests/integration/test_technical_design_chain.py` — three-phase chain through to
+  `data_integration` with correct ADR entity content, and a rejection case.
+
+### Remaining agent backlog (updated)
+
+Analysis, UX Design, and Technical Design are done. Still stub-only: Data & Integration, Governance &
+Security, Build, Validation/QA, Test, Deploy, Hypercare & Closure (7 agents).
+
+### Repo / branch state
+
+Work done on `feature/technical-design-agent`, branched from `main` after session 2's
+`feature/ux-design-agent` was merged (PR #2). Not yet merged — ask before merging, per the established
+pattern (push + PR happens on request; merge happens only when explicitly asked).
+
 ## Session 2 — 2026-07-22
 
 ### Completed
