@@ -9,6 +9,7 @@ import hashlib
 import html
 
 from docx import Document
+from openpyxl import load_workbook
 
 from app.agents_registry.contract import AgentRunRequest, AgentRunResult, ProducedArtefact
 from app.config import REPO_ROOT, get_settings
@@ -126,6 +127,13 @@ VALIDATION_FINDING_POOL = [
     "Accessibility check on the Request Form (SCR-002): confirm keyboard focus order matches visual order.",
     "Naming convention check: confirm all Dataverse entities follow the agreed prefix per DATA-001.",
     "Traceability check: confirm every DEF-00N from the Build Review Report has a corresponding fix entry.",
+]
+
+TEST_CASE_POOL = [
+    ("OQ", "Verify the Request Form submits successfully with all required fields populated.", "REQ-001"),
+    ("SIT", "Verify the custom connector to the finance system returns a valid response.", "ADR-002"),
+    ("PQ", "Verify an approver can approve a request from the Approvals Queue on mobile.", "SCR-004"),
+    ("UAT", "Verify an end user can track a submitted request to resolution.", "REQ-002"),
 ]
 
 
@@ -792,4 +800,52 @@ class ValidationQaMockAdapter:
             artefacts_produced=[produced],
             review_status="ready_for_review",
             execution_metrics={"seed": seed, "finding_count": finding_count},
+        )
+
+
+class TestAgentMockAdapter:
+    """Deterministic mock runtime for the Test Agent.
+
+    Fills 04_Templates/test_workbook.xlsx — an Excel artefact rather than
+    Word, exercising the openpyxl generation path — with seeded OQ/SIT/PQ/UAT
+    test cases traced to upstream entities, all passing, zero defects.
+    """
+
+    ARTEFACT_TYPE = "test_workbook"
+    TEMPLATE_RELATIVE_PATH = "04_Templates/test_workbook.xlsx"
+
+    def execute(self, request: AgentRunRequest) -> AgentRunResult:
+        settings = get_settings()
+        seed = _deterministic_seed(request.project_id, request.lifecycle_phase or "test", str(request.run_number))
+        version_label = _version_label(request.run_number)
+
+        case_count = 3
+        c_start = seed % len(TEST_CASE_POOL)
+        cases = [TEST_CASE_POOL[(c_start + i) % len(TEST_CASE_POOL)] for i in range(case_count)]
+        case_entities = [f"TC-{i + 1:03d}" for i in range(case_count)]
+
+        wb = load_workbook(str(REPO_ROOT / self.TEMPLATE_RELATIVE_PATH))
+        cases_ws = wb["Test Cases"]
+        for eid, (test_type, description, related_entity) in zip(case_entities, cases, strict=True):
+            cases_ws.append([eid, test_type, description, related_entity, "Passed"])
+
+        output_dir = settings.generated_artefacts_dir / request.project_id / self.ARTEFACT_TYPE
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"{version_label}.xlsx"
+        wb.save(output_path)
+        checksum = hashlib.sha256(output_path.read_bytes()).hexdigest()
+
+        produced = ProducedArtefact(
+            artefact_type=self.ARTEFACT_TYPE,
+            stable_key=self.ARTEFACT_TYPE,
+            file_path=str(output_path),
+            checksum=checksum,
+            entities=list(case_entities),
+        )
+
+        return AgentRunResult(
+            execution_summary=f"Generated {self.ARTEFACT_TYPE} with {case_count} seeded test cases, all passing.",
+            artefacts_produced=[produced],
+            review_status="ready_for_review",
+            execution_metrics={"seed": seed, "case_count": case_count},
         )
