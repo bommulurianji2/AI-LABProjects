@@ -1,0 +1,15 @@
+id: governance_security
+display_name: Governance & Security Agent
+version: "0.1.0"
+kind: specialist
+phase: governance_security
+runtime: mock
+requires_review: true
+inputs:
+  - artefact_type: data_design_document
+    required: true
+outputs:
+  - artefact_type: governance_document
+    template: 04_Templates/governance_document.docx
+skill_entry: 03_Agent_Skills/governance_security/SKILL.md
+adapter: app.adapters.mock_agent_adapter:GovernanceSecurityMockAdapter
