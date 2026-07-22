@@ -9,6 +9,16 @@ The user asked for the remaining 7 agents to be built one after another, each wi
 merge (no per-agent confirmation), reporting back only once all are done. This section is updated
 incrementally as each agent lands; see the git log for the exact PR-per-agent boundary.
 
+### Build Agent — completed
+
+- `03_Agent_Skills/build/manifest.yaml` + `SKILL.md`, two outputs — `build_review_report` and
+  `final_code_review_report` (both Word), matching authoritative artefact set items 10-11.
+- `BuildMockAdapter` — seeded build findings with stable `DEF-00N` IDs cross-referencing upstream
+  entities (e.g. `SCR-004`, `DATA-002`, `ADR-002`); the Final Code Review Report confirms each is
+  resolved.
+- Chain extended to six phases; unlocks `validation_qa` on approval. Tests: `test_build_registration.py`,
+  `test_build_chain.py`. 292 tests passing.
+
 ### Governance & Security Agent — completed
 
 - `03_Agent_Skills/governance_security/manifest.yaml` + `SKILL.md`, single output `governance_document`
