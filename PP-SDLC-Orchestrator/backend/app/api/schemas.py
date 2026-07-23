@@ -38,6 +38,7 @@ class RunResponse(BaseModel):
 class ArtefactVersionResponse(BaseModel):
     id: str
     artefact_id: str
+    artefact_type: str
     version_label: str
     file_path: str
     checksum: str
