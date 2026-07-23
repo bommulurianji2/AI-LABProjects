@@ -11,14 +11,19 @@ secrets/
 credentials/
 tokens/
 
-# Node / frontend (scoped to frontend/ so generic names like "build" don't
-# collide with unrelated folders elsewhere in the tree, e.g. 03_Agent_Skills/build)
+# Node / frontend. The frontend lives at PP-SDLC-Orchestrator/frontend/, not
+# at repo root — these are scoped to that exact path so generic names like
+# "build" don't collide with unrelated folders elsewhere in the tree (e.g.
+# 03_Agent_Skills/build). There is deliberately no separate frontend/.gitignore;
+# keeping every rule in this one root file avoids two sources of truth.
 node_modules/
-frontend/.next/
-frontend/out/
-frontend/dist/
-frontend/build/
-frontend/coverage/
+PP-SDLC-Orchestrator/frontend/.next/
+PP-SDLC-Orchestrator/frontend/out/
+PP-SDLC-Orchestrator/frontend/dist/
+PP-SDLC-Orchestrator/frontend/build/
+PP-SDLC-Orchestrator/frontend/coverage/
+*.tsbuildinfo
+next-env.d.ts
 
 # Python / backend
 __pycache__/
