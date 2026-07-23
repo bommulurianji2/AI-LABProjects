@@ -3,6 +3,95 @@
 Living record of what's done, tested, deferred, and blocked. Update this every session — do not let it
 go stale.
 
+## Session 5 — 2026-07-22
+
+### Completed
+
+- **Frontend shell** (`frontend/`): Next.js 16 + React 19 + TypeScript, App Router, plain client-side
+  data fetching against the FastAPI backend (no Server Components data-fetching layer — deliberate
+  choice, see Assumptions). Two pages:
+  - `/` — project list + create form.
+  - `/projects/[id]` — workspace: current phase/status, start-run action, every artefact a run
+    produced (each with its own download link), and the review form (approve / approve with comments /
+    rework / reject, with comments).
+  - `lib/api.ts` + `lib/types.ts` — a single typed API client, hand-kept in sync with
+    `backend/app/api/schemas.py` (no shared codegen yet).
+  - Removed the auto-generated placeholder assets/CSS module and the redundant nested
+    `frontend/.gitignore` (see Bugs below).
+- **Backend additions** needed to actually support the shell (not scope creep — the UI cannot function
+  without these): `GET /projects` (list), `GET /artefact-versions/{id}/download` (streams the real file
+  with correct content-type), and `GET /runs/{run_id}/artefact-versions` (list — see bug below).
+- Added a proper `Artefact` ↔ `ArtefactVersion` SQLAlchemy relationship and an `artefact_type` property
+  on `ArtefactVersion`, exposed via `ArtefactVersionResponse.artefact_type`. No migration needed — no new
+  column, just an ORM relationship over data that already existed.
+- Test infrastructure cleanup: replaced an `importlib.reload(app.main)`-based HTTP test isolation hack
+  with a plain `api_client` pytest fixture (see `tests/conftest.py`) — the reload was solving a problem
+  that didn't exist, since `lifespan()` already reads `get_settings()` fresh on every `TestClient` entry.
+
+### Bugs found via actual browser testing (not just unit tests) and fixed
+
+Manually driving the UI in a browser against the real backend — not just running the test suite —
+surfaced five real defects (four in-session, plus a session-1 gitignore bug this work exposed), all now
+fixed and covered:
+
+1. **Multi-artefact runs silently lost data.** The original `GET /runs/{run_id}/artefact-version`
+   (singular) returned only the most recent version. For the UX Design Agent (2 artefacts/run), the
+   frontend could only ever see one of them — the other was invisible and undownloadable. Fixed by
+   replacing it with `GET /runs/{run_id}/artefact-versions` (plural, returns all). Regression test:
+   `test_multi_artefact_run_listing.py`.
+2. **No way to tell artefacts apart.** Even fixing (1), `ArtefactVersionResponse` had no `artefact_type`
+   field — two artefacts from one run would both render as indistinguishable "v0.1 (Draft)" rows. Fixed
+   via the new model relationship/property above.
+3. **Stale phase/artefact state after actions.** `handleStartRun` and `handleSubmitReview` updated `run`
+   but not `project`/`artefactVersions`, so the UI kept showing the phase as "Pending" after a run
+   actually moved it to "Awaiting Review", and kept showing "Draft" after approval had actually promoted
+   the artefact to "Baseline". Fixed by re-fetching project/artefact state after both actions.
+4. **`.gitignore` real bug**: the frontend-scoped rules added in session 1 used `frontend/.next/` etc,
+   but the frontend actually lives at `PP-SDLC-Orchestrator/frontend/` — those patterns never matched
+   anything and were silently dead. The only thing actually excluding `node_modules`/`.next` was
+   create-next-app's own nested `frontend/.gitignore`, which also blanket-excluded `.env.example`
+   (defeating the documented-defaults convention used everywhere else in this repo). Fixed by deleting
+   the nested file and correcting the root `.gitignore` paths — one source of truth, verified with
+   `git check-ignore` against every case (real generated content ignored, `.env.example` and
+   `03_Agent_Skills/build/` correctly not ignored).
+5. **`react-hooks/set-state-in-effect` lint errors** on both pages' mount-time data fetches — a real
+   unmount/race-condition risk (calling `setState` after the component unmounts or `projectId` changes
+   before the fetch resolves), not a style nit. Fixed using React's own documented cancellation-guard
+   pattern (an `ignore` flag set in the effect's cleanup function), per
+   https://react.dev/learn/synchronizing-with-effects#fetching-data.
+
+### Tests executed (all passing — 306 backend tests, 3 new; frontend lint + production build both clean)
+
+- `test_list_projects_endpoint.py`, `test_download_artefact_endpoint.py`,
+  `test_multi_artefact_run_listing.py` — new backend coverage for the additions above.
+- `npm run lint` — clean (after the effect-pattern fix).
+- `npm run build` — production build + TypeScript check both succeed.
+- Manual: ran both dev servers, drove the full loop through the actual browser UI — create project →
+  start Analysis run → approve → start UX Design run (confirmed **both** artefacts show separately with
+  working individual download links) → approve (confirmed **both** promoted to `v1.0`/baseline, phase
+  advanced to Technical Design) → downloaded a `.docx` via the UI's link and confirmed it's a real,
+  valid Word file (`file` reports "Microsoft Word 2007+"). Checked browser console for errors at each
+  step — none.
+
+### Assumptions
+
+- Pages are Client Components doing plain `fetch`-based data loading against the REST API, not Server
+  Components / Server Actions. Deliberate: the backend is meant to be a real API boundary usable by
+  multiple future channels (Teams, Copilot, etc. per the spec's channel-abstraction requirement), and
+  mixing Server Component data-fetching into a thin admin-tool shell adds complexity (CORS becomes
+  irrelevant server-side but the mixed data-flow is harder to reason about) without real SEO/SSR benefit
+  for an internal tool.
+- No auth yet — the reviewer field on the review form is a free-text string, matching the backend's
+  current lack of a `/users` endpoint or any FK validation on `reviewer_id`.
+- Run/artefact state lives only in the page's React state, not persisted/resumed on refresh — there's
+  still no "list runs for a project" endpoint. A page refresh mid-run loses the in-memory run reference
+  even though the backend run itself is unaffected. Flagged, not fixed, this session.
+
+### Repo / branch state
+
+Work done on `feature/frontend-shell`, branched from `main` after session 4's 7-agent PR sequence
+(#4–#10) all merged. Not yet pushed or PR'd.
+
 ## Session 4 — 2026-07-22
 
 The user asked for the remaining 7 agents to be built one after another, each with an automatic PR and
