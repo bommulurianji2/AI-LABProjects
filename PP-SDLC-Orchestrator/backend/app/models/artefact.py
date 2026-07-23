@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, ForeignKey, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.domain.enums import ArtefactVersionStatus
@@ -22,6 +22,8 @@ class Artefact(Base):
     # survive reruns per the versioning requirement.
     stable_key: Mapped[str] = mapped_column(String(200))
 
+    versions: Mapped[list["ArtefactVersion"]] = relationship(back_populates="artefact")
+
 
 class ArtefactVersion(Base):
     __tablename__ = "artefact_versions"
@@ -34,3 +36,12 @@ class ArtefactVersion(Base):
     checksum: Mapped[str] = mapped_column(String(64))  # sha256 hex digest
     status: Mapped[str] = mapped_column(String(20), default=ArtefactVersionStatus.DRAFT.value)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+
+    artefact: Mapped["Artefact"] = relationship(back_populates="versions")
+
+    @property
+    def artefact_type(self) -> str:
+        """Convenience accessor so API responses can show which artefact a
+        version belongs to without every caller needing its own join.
+        """
+        return self.artefact.artefact_type

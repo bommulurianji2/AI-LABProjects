@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     agent_skills_dir: Path = REPO_ROOT / "03_Agent_Skills"
     templates_dir: Path = REPO_ROOT / "04_Templates"
     generated_artefacts_dir: Path = REPO_ROOT / "05_Generated_Artefacts"
+    cors_allowed_origins: list[str] = ["http://localhost:3000"]
 
 
 @lru_cache

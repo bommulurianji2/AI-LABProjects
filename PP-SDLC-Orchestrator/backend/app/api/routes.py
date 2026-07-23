@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.agents_registry.registry import AgentRegistry
@@ -20,6 +23,12 @@ from app.orchestrator.service import OrchestrationError, OrchestratorService
 
 router = APIRouter()
 
+_DOWNLOAD_MEDIA_TYPES = {
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".html": "text/html",
+}
+
 
 @router.get("/agents", response_model=list[AgentSummary])
 def list_agents(registry: AgentRegistry = Depends(get_registry)):
@@ -34,6 +43,11 @@ def create_project(
 ):
     orchestrator = OrchestratorService(session=session, registry=registry)
     return orchestrator.create_project(body.name)
+
+
+@router.get("/projects", response_model=list[ProjectResponse])
+def list_projects(session: Session = Depends(get_session)):
+    return session.query(Project).order_by(Project.created_at.desc()).all()
 
 
 @router.get("/projects/{project_id}", response_model=ProjectResponse)
@@ -71,12 +85,32 @@ def get_run(run_id: str, session: Session = Depends(get_session)):
     return run
 
 
-@router.get("/runs/{run_id}/artefact-version", response_model=ArtefactVersionResponse)
-def get_run_artefact_version(run_id: str, session: Session = Depends(get_session)):
-    version = session.query(ArtefactVersion).filter_by(run_id=run_id).order_by(ArtefactVersion.created_at.desc()).first()
+@router.get("/runs/{run_id}/artefact-versions", response_model=list[ArtefactVersionResponse])
+def list_run_artefact_versions(run_id: str, session: Session = Depends(get_session)):
+    """Every artefact version this run produced — a run can produce more
+    than one (e.g. the UX Design Agent's spec + prototype), so callers must
+    not assume there's exactly one.
+    """
+    return (
+        session.query(ArtefactVersion)
+        .filter_by(run_id=run_id)
+        .order_by(ArtefactVersion.created_at.asc())
+        .all()
+    )
+
+
+@router.get("/artefact-versions/{version_id}/download")
+def download_artefact_version(version_id: str, session: Session = Depends(get_session)):
+    version = session.get(ArtefactVersion, version_id)
     if version is None:
-        raise HTTPException(status_code=404, detail="No artefact version produced by this run yet")
-    return version
+        raise HTTPException(status_code=404, detail="Artefact version not found")
+
+    file_path = Path(version.file_path)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Artefact file no longer exists on disk")
+
+    media_type = _DOWNLOAD_MEDIA_TYPES.get(file_path.suffix.lower(), "application/octet-stream")
+    return FileResponse(path=file_path, media_type=media_type, filename=f"{version.version_label}{file_path.suffix}")
 
 
 @router.post("/runs/{run_id}/review", response_model=ProjectResponse)
