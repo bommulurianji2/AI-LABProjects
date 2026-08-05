@@ -3,6 +3,105 @@
 Living record of what's done, tested, deferred, and blocked. Update this every session — do not let it
 go stale.
 
+## Session 6 — 2026-08-05
+
+The user flagged that every agent's output was "just basic templates, nothing in them" — correct: every
+agent runs `runtime: mock`, deterministic canned-pool text, never real generation from actual input. This
+session wires a **real** LLM behind the Analysis agent (the user's own OpenRouter API key), proving the
+mock→llm swap point designed back in session 1 actually works, before extending it to the other 10.
+
+### Completed
+
+- **Model provider abstraction** (`backend/app/adapters/model_providers/`): a one-method `ModelProvider`
+  Protocol, a real `OpenRouterProvider` (OpenAI-compatible REST API via `httpx`, sync to match the rest
+  of the codebase), and a `factory.get_model_provider()` that resolves the configured provider fresh from
+  settings on every call — reads `PPSDLC_OPENROUTER_API_KEY`/`_MODEL`/`_BASE_URL` from `backend/.env`.
+- **`AnalysisLlmAdapter`** (`backend/app/adapters/llm_agent_adapter.py`): sends `SKILL.md` as the system
+  prompt (this is literally what it was written for) and the task request + a JSON-shape instruction as
+  the user prompt, parses the response (tolerating markdown-fenced JSON), and renders the same
+  `requirement_specification.docx` template the mock adapter uses — via a newly-extracted shared
+  `requirement_specification_renderer.render()` so the two runtimes don't duplicate template-filling code.
+- **`03_Agent_Skills/analysis/manifest.yaml` now declares `runtime: llm`** — the Analysis agent is for
+  real, not mocked, in the actual running app. `SKILL.md` was cleaned up to be an accurate real system
+  prompt (its old text referencing "this agent's runtime: mock" was no longer true and has been replaced
+  with guardrails a model can actually follow, plus an "Implementation note" documenting both runtimes).
+- **Test isolation without touching ~8 existing chain test files**: an autouse `stub_model_provider`
+  fixture (`tests/conftest.py`) monkeypatches `model_provider_factory.get_model_provider` to return a
+  deterministic `FakeModelProvider` (`tests/fixtures/fake_model_provider.py`) for every test. Every
+  existing chain test (which all start with the Analysis phase) keeps passing unmodified, with zero
+  network calls and zero cost — verified by running the full suite both before and after the manifest
+  switch.
+- Refactored `AnalysisMockAdapter` to use the same shared `requirement_specification_renderer` and a new
+  `app/adapters/common.py::version_label()` (the mock's own `_version_label` is now an alias to it) — the
+  mock stays available and tested, just no longer duplicates rendering logic with the new LLM adapter.
+- Moved `.env.example` from the repo root to `backend/.env.example` — a real session-1 bug: `config.py`
+  reads `.env` relative to the process's working directory, which is always `backend/` (every script
+  `Push-Location`s there first), so the root-level file was never actually the one `Settings` would read.
+  Fixed the documented paths inside it to match (relative to `backend/`, not repo root) and added the new
+  OpenRouter variables.
+
+### Bugs found via real manual testing (not caught by any unit test) and fixed
+
+1. **Monkeypatch targeted the wrong reference.** `llm_agent_adapter.py` originally did
+   `from ...factory import get_model_provider`, binding a local copy at import time; patching
+   `factory.get_model_provider` afterward didn't affect that already-bound name. Every chain test that
+   reached the Analysis phase failed with a real `ModelProviderError` the first time the manifest was
+   switched. Fixed by importing the factory module and calling `model_provider_factory.get_model_provider()`
+   — the standard fix for this exact class of mocking mistake.
+2. **Doubled requirement ID prefixes with a real model.** First live OpenRouter test produced
+   `"REQ-001: REQ-001: The system shall..."` — the model prepended its own `"REQ-001:"` despite the
+   prompt not yet forbidding it, and the system's own ID assignment stacked on top. Fixed two ways:
+   tightened the prompt to explicitly forbid model-supplied numbering, and added a defensive
+   `_strip_leading_id_prefix` regex (handles `"REQ-001:"`, `"REQ-1:"`, `"REQ001:"`, `"1."`, `"1)"`) so a
+   future model that ignores the instruction still doesn't produce doubled IDs. Covered by 5 parametrized
+   regression cases.
+3. **Frontend showed a misleading "Start a run" form on an in-progress phase.** Discovered by starting a
+   run via `curl` (a separate session from the browser) then opening that project in the browser — since
+   run/artefact state only lives in React state (no "list runs" endpoint yet), the workspace page had no
+   way to know a run was already awaiting review, and `canStartRun` didn't check `project.phase_status`
+   at all — it would have let the user submit a doomed request the backend would reject with 409. Fixed
+   `canStartRun` to also require `phase_status` be `pending`/`rework`, and added an honest in-UI message
+   for the "awaiting review but no local run state" case instead of silently showing the wrong form.
+
+### Tests executed (all passing — 321 backend tests, 15 new)
+
+- `test_llm_agent_adapter.py` (11 cases, including 5 parametrized ID-prefix regressions),
+  `test_openrouter_provider.py` (4 cases, all network calls mocked via `monkeypatch.setattr(httpx, "post", ...)`).
+- Full suite run three times at key points: before the manifest switch (316 passed), immediately after
+  (caught the monkeypatch bug, 1 file changed, re-ran clean), and after the prefix fix (321 passed) — each
+  confirming zero real network calls happen during `pytest`.
+- **Manual, with the user's real OpenRouter key**: three different real scenarios end-to-end (vendor
+  invoice approval, contractor onboarding, warranty claims) — two via raw API calls, one by literally
+  driving the browser UI (create project → start run → wait for the real model → download and open the
+  resulting `.docx`). Every one produced genuinely tailored requirements, scope, and assumptions specific
+  to that scenario — not pool-selected boilerplate. This is the first artefact in the whole project
+  generated by an actual model rather than canned text.
+
+### Assumptions
+
+- OpenRouter, not Azure OpenAI, is the active provider — a deviation from the original spec's Azure-first
+  target, chosen because it's what the user had a key for right now. The `ModelProvider` Protocol is the
+  seam that makes swapping to Azure OpenAI/Foundry later a new provider class, not a rewrite.
+- Default model is `anthropic/claude-sonnet-4.5` via `PPSDLC_OPENROUTER_MODEL` — easily overridden per the
+  user's cost/quality preference; not verified against every possible OpenRouter model, only the account's
+  default routing at test time.
+- No retry/backoff on transient OpenRouter failures (rate limits, timeouts) — a failure surfaces as a
+  clean `ModelProviderError` → run marked `FAILED`, same as any other adapter exception, but the user has
+  to manually retry by starting a new run. Acceptable for now, worth revisiting before real usage at scale.
+
+### Repo / branch state
+
+Work done on `feature/analysis-llm-adapter`, branched from `main` after session 5's frontend-shell PR
+(#11) merged. Not yet pushed or PR'd.
+
+### Remaining backlog (updated)
+
+The other 10 agents still run `runtime: mock`. Extending `runtime: llm` to each is now a known, proven
+pattern (provider abstraction + adapter + manifest edit + no test-file changes needed) rather than new
+architecture — the next natural increment. Everything else in the session-1 "Deferred to later sessions"
+list (M365/Azure adapters, Entra ID auth, remaining data-model entities, Playwright/security/resilience
+suites, Azure IaC) is still untouched.
+
 ## Session 5 — 2026-07-22
 
 ### Completed
