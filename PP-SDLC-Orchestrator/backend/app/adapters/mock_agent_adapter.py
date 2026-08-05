@@ -11,6 +11,7 @@ import html
 from docx import Document
 from openpyxl import load_workbook
 
+from app.adapters import common, requirement_specification_renderer
 from app.agents_registry.contract import AgentRunRequest, AgentRunResult, ProducedArtefact
 from app.config import REPO_ROOT, get_settings
 
@@ -142,8 +143,9 @@ def _deterministic_seed(*parts: str) -> int:
     return int(digest[:8], 16)
 
 
-def _version_label(run_number: int) -> str:
-    return "v0.1" if run_number == 1 else f"v0.{run_number}"
+# Single source of truth lives in app.adapters.common - aliased here so the
+# ~10 call sites below don't all need touching.
+_version_label = common.version_label
 
 
 class AnalysisMockAdapter:
@@ -167,29 +169,23 @@ class AnalysisMockAdapter:
         start = seed % len(REQUIREMENT_POOL)
         chosen = [REQUIREMENT_POOL[(start + i) % len(REQUIREMENT_POOL)] for i in range(count)]
         entities = [f"REQ-{i + 1:03d}" for i in range(count)]
+        requirement_lines = [f"{eid}: {text}" for eid, text in zip(entities, chosen, strict=True)]
 
         version_label = _version_label(request.run_number)
         project_name = request.constraints.get("project_name", request.project_id)
 
-        doc = Document(str(REPO_ROOT / self.TEMPLATE_RELATIVE_PATH))
-        for para in doc.paragraphs:
-            if "{{PROJECT_NAME}}" in para.text:
-                para.text = para.text.replace("{{PROJECT_NAME}}", str(project_name))
-            elif "{{VERSION_LABEL}}" in para.text:
-                para.text = para.text.replace("{{VERSION_LABEL}}", version_label)
-            elif "{{SCOPE}}" in para.text:
-                para.text = f"Scope derived from: {request.task_request}"
-            elif "{{REQUIREMENTS_TABLE}}" in para.text:
-                para.text = ""
-                for entity, text in zip(entities, chosen, strict=True):
-                    doc.add_paragraph(f"{entity}: {text}")
-            elif "{{ASSUMPTIONS}}" in para.text:
-                para.text = "No blocking assumptions for this mock run."
-
-        output_dir = settings.generated_artefacts_dir / request.project_id / self.ARTEFACT_TYPE
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / f"{version_label}.docx"
-        doc.save(output_path)
+        output_path = (
+            settings.generated_artefacts_dir / request.project_id / self.ARTEFACT_TYPE / f"{version_label}.docx"
+        )
+        requirement_specification_renderer.render(
+            repo_root=REPO_ROOT,
+            output_path=output_path,
+            project_name=str(project_name),
+            version_label=version_label,
+            scope_text=f"Scope derived from: {request.task_request}",
+            requirement_lines=requirement_lines,
+            assumptions_text="No blocking assumptions for this mock run.",
+        )
 
         checksum = hashlib.sha256(output_path.read_bytes()).hexdigest()
 
