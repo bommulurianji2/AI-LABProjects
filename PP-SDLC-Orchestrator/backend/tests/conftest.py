@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db.base import Base
 from app.models import *  # noqa: F401,F403 - populate Base.metadata
+from tests.fixtures.fake_model_provider import FakeModelProvider
 
 
 def _fresh_sqlite_engine(db_path) -> Engine:
@@ -29,6 +30,22 @@ def isolate_generated_artefacts(tmp_path, monkeypatch):
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def stub_model_provider(monkeypatch):
+    """Every test gets a deterministic FakeModelProvider instead of a real
+    network call to OpenRouter — this is what lets `runtime: llm` agents
+    (e.g. Analysis) run through the entire suite, including every chain
+    test that starts with the Analysis phase, with zero cost, zero
+    network dependency, and zero flakiness. Tests that want to exercise
+    prompt construction or response parsing directly inject their own
+    FakeModelProvider into the adapter instead of relying on this stub.
+    """
+    monkeypatch.setattr(
+        "app.adapters.model_providers.factory.get_model_provider",
+        lambda: FakeModelProvider(),
+    )
 
 
 @pytest.fixture
