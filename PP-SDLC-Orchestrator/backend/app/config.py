@@ -16,6 +16,13 @@ class Settings(BaseSettings):
     generated_artefacts_dir: Path = REPO_ROOT / "05_Generated_Artefacts"
     cors_allowed_origins: list[str] = ["http://localhost:3000"]
 
+    # LLM provider (OpenRouter, OpenAI-compatible) - only required for agents
+    # whose manifest declares `runtime: llm`. Set PPSDLC_OPENROUTER_API_KEY in
+    # backend/.env; never commit a real key.
+    openrouter_api_key: str | None = None
+    openrouter_model: str = "anthropic/claude-sonnet-4.5"
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+
 
 @lru_cache
 def get_settings() -> Settings:
