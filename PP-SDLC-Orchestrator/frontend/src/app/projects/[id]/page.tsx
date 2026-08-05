@@ -120,8 +120,17 @@ export default function ProjectWorkspacePage() {
     );
   }
 
-  const canStartRun = project.status !== "completed" && (!run || run.state === "completed");
+  // Mirrors the backend's own guard in OrchestratorService.start_run — a
+  // run can only start when the phase is actually pending/rework, not
+  // merely "we have no local run object" (which is also true right after
+  // a page refresh mid-review, since there's no "list runs" endpoint yet
+  // to rediscover an in-flight run).
+  const canStartRun =
+    project.status !== "completed" &&
+    (project.phase_status === "pending" || project.phase_status === "rework") &&
+    (!run || run.state === "completed");
   const awaitingReview = run?.state === "waiting_for_human_review";
+  const awaitingReviewWithoutLocalRunState = project.phase_status === "awaiting_review" && !awaitingReview;
 
   return (
     <main className="page stack">
@@ -144,6 +153,16 @@ export default function ProjectWorkspacePage() {
       {project.status === "completed" && (
         <section className="card">
           <p>This project has completed its full lifecycle.</p>
+        </section>
+      )}
+
+      {awaitingReviewWithoutLocalRunState && (
+        <section className="card">
+          <p>
+            This phase has a run awaiting review, but its details aren&apos;t available in this browser
+            session (there&apos;s no run-history endpoint yet — see the implementation ledger). Submit the
+            review from the session that started the run, or start a fresh run once that one is resolved.
+          </p>
         </section>
       )}
 
