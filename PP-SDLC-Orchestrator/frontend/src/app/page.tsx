@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
-import { formatLabel } from "@/lib/format";
+import { badgeClass, formatLabel } from "@/lib/format";
 import type { Project } from "@/lib/types";
 
 export default function HomePage() {
@@ -68,7 +68,7 @@ export default function HomePage() {
   return (
     <main className="page stack">
       <section className="card">
-        <h2>New project</h2>
+        <h2 style={{ marginBottom: "0.75rem" }}>New project</h2>
         <form onSubmit={handleCreate} className="stack">
           <div className="field">
             <label htmlFor="project-name">Project name</label>
@@ -88,7 +88,7 @@ export default function HomePage() {
       </section>
 
       <section>
-        <h2>Projects</h2>
+        <div className="section-title">Projects</div>
         {loadError && <p className="error">{loadError}</p>}
         {projects === null && !loadError && <p className="muted">Loading…</p>}
         {projects !== null && projects.length === 0 && <p className="muted">No projects yet.</p>}
@@ -96,11 +96,12 @@ export default function HomePage() {
           <Link key={project.id} href={`/projects/${project.id}`} className="card card-link">
             <div className="row" style={{ justifyContent: "space-between" }}>
               <strong>{project.name}</strong>
-              <span className="badge">{project.status}</span>
+              <span className={badgeClass(project.status)}>{formatLabel(project.status)}</span>
             </div>
-            <p className="muted">
-              {formatLabel(project.current_phase)} — {formatLabel(project.phase_status)}
-            </p>
+            <div className="row" style={{ marginTop: "0.4rem" }}>
+              <span className={badgeClass(project.phase_status)}>{formatLabel(project.phase_status)}</span>
+              <span className="muted">{formatLabel(project.current_phase)}</span>
+            </div>
           </Link>
         ))}
       </section>

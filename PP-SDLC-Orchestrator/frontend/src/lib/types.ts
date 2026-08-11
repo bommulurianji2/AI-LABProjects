@@ -56,6 +56,7 @@ export interface RunHistoryEntry {
   state: string;
   started_at: string | null;
   ended_at: string | null;
+  task_request: string | null;
   review_decision: string | null;
   artefact_types: string[];
 }

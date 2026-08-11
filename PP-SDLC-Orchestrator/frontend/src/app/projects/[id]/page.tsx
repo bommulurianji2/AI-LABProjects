@@ -4,10 +4,10 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
-import { formatLabel } from "@/lib/format";
-import type { ArtefactVersion, Project, ReviewDecision, Run, RunHistoryEntry, User } from "@/lib/types";
-
-const LAST_REVIEWER_STORAGE_KEY = "pp-sdlc-last-reviewer-id";
+import { badgeClass, formatLabel } from "@/lib/format";
+import { useCurrentUser } from "@/lib/current-user-context";
+import PhasePipeline from "@/components/PhasePipeline";
+import type { ArtefactVersion, Project, ReviewDecision, Run, RunHistoryEntry } from "@/lib/types";
 
 const DECISIONS: { value: ReviewDecision; label: string }[] = [
   { value: "approved", label: "Approve" },
@@ -21,9 +21,11 @@ const RESUMABLE_RUN_STATES = new Set(["waiting_for_human_review", "in_review"]);
 export default function ProjectWorkspacePage() {
   const params = useParams<{ id: string }>();
   const projectId = params.id;
+  const { currentUserId, currentUser } = useCurrentUser();
 
   const [project, setProject] = useState<Project | null>(null);
   const [run, setRun] = useState<Run | null>(null);
+  const [activeTaskRequest, setActiveTaskRequest] = useState<string | null>(null);
   const [artefactVersions, setArtefactVersions] = useState<ArtefactVersion[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -37,14 +39,6 @@ export default function ProjectWorkspacePage() {
   const [startingRun, setStartingRun] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
 
-  const [users, setUsers] = useState<User[]>([]);
-  const [usersError, setUsersError] = useState<string | null>(null);
-  const [reviewerId, setReviewerId] = useState("");
-  const [showAddReviewer, setShowAddReviewer] = useState(false);
-  const [newReviewerEmail, setNewReviewerEmail] = useState("");
-  const [newReviewerRole, setNewReviewerRole] = useState("Reviewer");
-  const [addingReviewer, setAddingReviewer] = useState(false);
-  const [addReviewerError, setAddReviewerError] = useState<string | null>(null);
   const [decision, setDecision] = useState<ReviewDecision>("approved");
   const [comments, setComments] = useState("");
   const [submittingReview, setSubmittingReview] = useState(false);
@@ -82,6 +76,7 @@ export default function ProjectWorkspacePage() {
           if (!ignore) {
             setRun(resumedRun);
             setArtefactVersions(versions);
+            setActiveTaskRequest(resumable.task_request);
           }
         }
       } catch (err) {
@@ -94,35 +89,6 @@ export default function ProjectWorkspacePage() {
       ignore = true;
     };
   }, [projectId]);
-
-  useEffect(() => {
-    // Reviewers aren't project-scoped, so this loads once per page visit,
-    // independent of projectId. Restores the last-used reviewer from this
-    // browser (pure convenience for repeated manual testing — not an
-    // identity mechanism) so a tester doesn't re-pick themselves every run.
-    let ignore = false;
-    (async () => {
-      try {
-        const data = await api.listUsers();
-        if (ignore) return;
-        setUsers(data);
-        setUsersError(null);
-        const lastReviewerId = window.localStorage.getItem(LAST_REVIEWER_STORAGE_KEY);
-        if (lastReviewerId && data.some((u) => u.id === lastReviewerId)) {
-          setReviewerId(lastReviewerId);
-        } else if (data.length > 0) {
-          setReviewerId(data[0].id);
-        }
-      } catch (err) {
-        if (!ignore) {
-          setUsersError(err instanceof ApiError ? err.message : "Could not load reviewers.");
-        }
-      }
-    })();
-    return () => {
-      ignore = true;
-    };
-  }, []);
 
   async function refreshRunHistory() {
     try {
@@ -150,26 +116,6 @@ export default function ProjectWorkspacePage() {
     }
   }
 
-  async function handleAddReviewer(e: React.FormEvent) {
-    e.preventDefault();
-    if (!newReviewerEmail.trim()) return;
-
-    setAddingReviewer(true);
-    setAddReviewerError(null);
-    try {
-      const user = await api.createUser(newReviewerEmail.trim(), newReviewerRole.trim() || "Reviewer");
-      setUsers((prev) => (prev.some((u) => u.id === user.id) ? prev : [...prev, user]));
-      setReviewerId(user.id);
-      window.localStorage.setItem(LAST_REVIEWER_STORAGE_KEY, user.id);
-      setNewReviewerEmail("");
-      setShowAddReviewer(false);
-    } catch (err) {
-      setAddReviewerError(err instanceof ApiError ? err.message : "Could not add reviewer.");
-    } finally {
-      setAddingReviewer(false);
-    }
-  }
-
   async function handleStartRun(e: React.FormEvent) {
     e.preventDefault();
     if (!taskRequest.trim()) return;
@@ -177,8 +123,10 @@ export default function ProjectWorkspacePage() {
     setStartingRun(true);
     setRunError(null);
     try {
-      const startedRun = await api.startRun(projectId, taskRequest.trim());
+      const submittedTask = taskRequest.trim();
+      const startedRun = await api.startRun(projectId, submittedTask);
       setRun(startedRun);
+      setActiveTaskRequest(submittedTask);
       setTaskRequest("");
       setArtefactVersions(await api.getRunArtefactVersions(startedRun.id));
       setProject(await api.getProject(projectId)); // phase_status just moved to awaiting_review
@@ -192,7 +140,7 @@ export default function ProjectWorkspacePage() {
 
   async function handleSubmitReview(e: React.FormEvent) {
     e.preventDefault();
-    if (!run || !reviewerId.trim()) return;
+    if (!run || !currentUserId) return;
 
     setSubmittingReview(true);
     setReviewError(null);
@@ -201,8 +149,7 @@ export default function ProjectWorkspacePage() {
         .split("\n")
         .map((line) => line.trim())
         .filter(Boolean);
-      const updatedProject = await api.submitReview(run.id, reviewerId.trim(), decision, commentList);
-      window.localStorage.setItem(LAST_REVIEWER_STORAGE_KEY, reviewerId.trim());
+      const updatedProject = await api.submitReview(run.id, currentUserId, decision, commentList);
       setProject(updatedProject);
       setRun(await api.getRun(run.id));
       setArtefactVersions(await api.getRunArtefactVersions(run.id)); // may have just been promoted to baseline
@@ -241,7 +188,7 @@ export default function ProjectWorkspacePage() {
   const awaitingReview = run?.state === "waiting_for_human_review";
 
   return (
-    <main className="page stack">
+    <main className="page page-wide stack">
       <div>
         <Link href="/" className="muted">
           ← Projects
@@ -251,22 +198,32 @@ export default function ProjectWorkspacePage() {
       <section className="card">
         <div className="row" style={{ justifyContent: "space-between" }}>
           <h2>{project.name}</h2>
-          <span className="badge">{formatLabel(project.status)}</span>
+          <span className={badgeClass(project.status)}>{formatLabel(project.status)}</span>
         </div>
-        <p className="muted">
+        <p className="muted" style={{ marginBottom: "1.1rem" }}>
           Phase: {formatLabel(project.current_phase)} — {formatLabel(project.phase_status)}
         </p>
+        <PhasePipeline
+          currentPhase={project.current_phase}
+          phaseStatus={project.phase_status}
+          projectStatus={project.status}
+        />
       </section>
 
       {project.status === "completed" && (
         <section className="card">
-          <p>This project has completed its full lifecycle.</p>
+          <p>🎉 This project has completed its full lifecycle.</p>
         </section>
       )}
 
       {canStartRun && project.status !== "completed" && (
         <section className="card">
-          <h3>Start a run for {formatLabel(project.current_phase)}</h3>
+          <div className="section-title">Start a run for {formatLabel(project.current_phase)}</div>
+          {currentUser && (
+            <p className="muted" style={{ marginBottom: "0.75rem" }}>
+              Running as <strong>{currentUser.email}</strong> ({currentUser.role})
+            </p>
+          )}
           <form onSubmit={handleStartRun} className="stack">
             <div className="field">
               <label htmlFor="task-request">Task request</label>
@@ -289,20 +246,26 @@ export default function ProjectWorkspacePage() {
 
       {run && (
         <section className="card">
-          <h3>
-            Run for {formatLabel(run.phase)} (#{run.run_number})
-          </h3>
-          <p className="muted">Agent: {run.agent_id}</p>
-          <p>
-            Status: <span className="badge">{formatLabel(run.state)}</span>
+          <div className="row" style={{ justifyContent: "space-between" }}>
+            <div className="section-title" style={{ marginBottom: 0 }}>
+              {formatLabel(run.phase)} — run #{run.run_number}
+            </div>
+            <span className={badgeClass(run.state)}>{formatLabel(run.state)}</span>
+          </div>
+          <p className="muted" style={{ marginTop: "0.3rem" }}>
+            Agent: {run.agent_id}
           </p>
 
+          {activeTaskRequest && <div className="task-note" style={{ marginTop: "0.75rem" }}>{activeTaskRequest}</div>}
+
           {artefactVersions.length > 0 && (
-            <ul className="stack" style={{ listStyle: "none", padding: 0 }}>
+            <ul className="stack" style={{ listStyle: "none", padding: 0, marginTop: "0.9rem" }}>
               {artefactVersions.map((version) => (
-                <li key={version.id}>
-                  {formatLabel(version.artefact_type)} — {version.version_label} ({formatLabel(version.status)})
-                  {" — "}
+                <li key={version.id} className="row" style={{ justifyContent: "space-between" }}>
+                  <span>
+                    {formatLabel(version.artefact_type)} — {version.version_label}{" "}
+                    <span className={badgeClass(version.status)}>{formatLabel(version.status)}</span>
+                  </span>
                   <a href={api.downloadUrlForVersion(version.id)}>Download</a>
                 </li>
               ))}
@@ -310,59 +273,18 @@ export default function ProjectWorkspacePage() {
           )}
 
           {awaitingReview && (
-            <form onSubmit={handleSubmitReview} className="stack" style={{ marginTop: "1rem" }}>
-              <h4>Submit review</h4>
-              {usersError && <p className="error">{usersError}</p>}
-              <div className="field">
-                <label htmlFor="reviewer-id">Reviewer</label>
-                {users.length > 0 ? (
-                  <select
-                    id="reviewer-id"
-                    value={reviewerId}
-                    onChange={(e) => setReviewerId(e.target.value)}
-                    disabled={submittingReview}
-                  >
-                    {users.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.email} ({u.role})
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <p className="muted">No reviewers yet — add one below.</p>
-                )}
-                <button type="button" onClick={() => setShowAddReviewer((v) => !v)} className="secondary">
-                  {showAddReviewer ? "Cancel" : "+ Add reviewer"}
-                </button>
+            <form onSubmit={handleSubmitReview} className="stack" style={{ marginTop: "1.1rem" }}>
+              <div className="divider" style={{ marginBottom: "0.5rem" }} />
+              <div className="section-title" style={{ marginBottom: "0.25rem" }}>
+                Submit review
               </div>
-
-              {showAddReviewer && (
-                <div className="field" style={{ border: "1px solid var(--border)", borderRadius: 6, padding: "0.75rem" }}>
-                  <div className="field">
-                    <label htmlFor="new-reviewer-email">New reviewer email</label>
-                    <input
-                      id="new-reviewer-email"
-                      value={newReviewerEmail}
-                      onChange={(e) => setNewReviewerEmail(e.target.value)}
-                      placeholder="reviewer@example.test"
-                      disabled={addingReviewer}
-                    />
-                  </div>
-                  <div className="field">
-                    <label htmlFor="new-reviewer-role">Role</label>
-                    <input
-                      id="new-reviewer-role"
-                      value={newReviewerRole}
-                      onChange={(e) => setNewReviewerRole(e.target.value)}
-                      placeholder="Reviewer"
-                      disabled={addingReviewer}
-                    />
-                  </div>
-                  {addReviewerError && <p className="error">{addReviewerError}</p>}
-                  <button type="button" onClick={handleAddReviewer} disabled={addingReviewer || !newReviewerEmail.trim()}>
-                    {addingReviewer ? "Adding…" : "Add reviewer"}
-                  </button>
-                </div>
+              {currentUser ? (
+                <p className="muted">
+                  Reviewing as <strong>{currentUser.email}</strong> ({currentUser.role}) — switch who you&apos;re
+                  acting as in the header if needed.
+                </p>
+              ) : (
+                <p className="error">No user selected — add one in the header first.</p>
               )}
               <div className="field">
                 <label htmlFor="decision">Decision</label>
@@ -390,7 +312,7 @@ export default function ProjectWorkspacePage() {
                 />
               </div>
               {reviewError && <p className="error">{reviewError}</p>}
-              <button type="submit" disabled={submittingReview || !reviewerId.trim()}>
+              <button type="submit" disabled={submittingReview || !currentUserId}>
                 {submittingReview ? "Submitting…" : "Submit review"}
               </button>
             </form>
@@ -399,28 +321,33 @@ export default function ProjectWorkspacePage() {
       )}
 
       <section className="card">
-        <h3>Run history</h3>
+        <div className="section-title">Run history</div>
         {historyError && <p className="error">{historyError}</p>}
         {runHistory.length === 0 ? (
           <p className="muted">No runs yet for this project.</p>
         ) : (
           <ul className="stack" style={{ listStyle: "none", padding: 0 }}>
             {runHistory.map((entry) => (
-              <li key={entry.id} style={{ borderTop: "1px solid var(--border)", paddingTop: "0.5rem" }}>
+              <li key={entry.id} style={{ borderTop: "1px solid var(--border)", paddingTop: "0.6rem" }}>
                 <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-                  <span>
-                    {formatLabel(entry.phase)} (#{entry.run_number}) — <span className="badge">{formatLabel(entry.state)}</span>
+                  <div className="row">
+                    <strong>
+                      {formatLabel(entry.phase)} #{entry.run_number}
+                    </strong>
+                    <span className={badgeClass(entry.state)}>{formatLabel(entry.state)}</span>
                     {entry.review_decision && (
-                      <>
-                        {" "}
-                        — <span className="badge">{formatLabel(entry.review_decision)}</span>
-                      </>
+                      <span className={badgeClass(entry.review_decision)}>{formatLabel(entry.review_decision)}</span>
                     )}
-                  </span>
+                  </div>
                   <button type="button" className="secondary" onClick={() => handleToggleHistoryRun(entry.id)}>
                     {expandedHistoryRunId === entry.id ? "Hide" : "Details"}
                   </button>
                 </div>
+                {entry.task_request && (
+                  <p className="muted" style={{ marginTop: "0.3rem" }}>
+                    {entry.task_request}
+                  </p>
+                )}
                 {expandedHistoryRunId === entry.id && (
                   <div style={{ marginTop: "0.5rem" }}>
                     {expandedHistoryLoading ? (
@@ -430,9 +357,12 @@ export default function ProjectWorkspacePage() {
                     ) : (
                       <ul style={{ listStyle: "none", padding: 0 }}>
                         {expandedHistoryVersions.map((version) => (
-                          <li key={version.id}>
-                            {formatLabel(version.artefact_type)} — {version.version_label} (
-                            {formatLabel(version.status)}) — <a href={api.downloadUrlForVersion(version.id)}>Download</a>
+                          <li key={version.id} className="row" style={{ justifyContent: "space-between" }}>
+                            <span>
+                              {formatLabel(version.artefact_type)} — {version.version_label}{" "}
+                              <span className={badgeClass(version.status)}>{formatLabel(version.status)}</span>
+                            </span>
+                            <a href={api.downloadUrlForVersion(version.id)}>Download</a>
                           </li>
                         ))}
                       </ul>
