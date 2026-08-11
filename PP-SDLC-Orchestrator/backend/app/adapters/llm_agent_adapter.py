@@ -16,6 +16,7 @@ from app.adapters import (
     data_integration_renderer,
     deploy_renderer,
     governance_security_renderer,
+    hypercare_closure_renderer,
     requirement_specification_renderer,
     technical_design_renderer,
     test_renderer,
@@ -1110,4 +1111,110 @@ class DeployLlmAdapter:
             "}\n\n"
             "If defects_clear is false, the deployment fields are ignored — focus your response on an "
             "accurate open_defect_summary instead of filling them in."
+        )
+
+
+class HypercareClosureLlmAdapter:
+    """Real LLM-backed runtime for the Hypercare & Closure Agent — the
+    final lifecycle phase. Reads every upstream artefact present via
+    _format_multi_artefact_context, in particular the IQ Document's
+    pre-deployment verification (which already carries forward the Test
+    Workbook's defect status from Deploy). Unlike Deploy, this agent
+    doesn't re-gate on defects — Deploy already refused to proceed if any
+    were open — it must simply never close silently without referencing
+    that check, per its guardrail.
+    """
+
+    SKILL_RELATIVE_PATH = "03_Agent_Skills/hypercare_closure/SKILL.md"
+    CONTEXT_ARTEFACT_TYPES = [
+        "requirement_specification",
+        "ux_design_specification",
+        "solution_approach",
+        "architecture_handbook",
+        "data_design_document",
+        "governance_document",
+        "build_review_report",
+        "final_code_review_report",
+        "validation_report",
+        "test_workbook",
+        "iq_document",
+    ]
+
+    def __init__(self, provider: ModelProvider | None = None):
+        self._provider = provider
+
+    def execute(self, request: AgentRunRequest) -> AgentRunResult:
+        provider = self._provider or model_provider_factory.get_model_provider()
+        settings = get_settings()
+        project_name = request.constraints.get("project_name", request.project_id)
+
+        system_prompt = (REPO_ROOT / self.SKILL_RELATIVE_PATH).read_text(encoding="utf-8")
+        upstream_context = _format_multi_artefact_context(request.upstream_artefacts_text, self.CONTEXT_ARTEFACT_TYPES)
+        user_prompt = self._build_user_prompt(
+            project_name=str(project_name), task_request=request.task_request, upstream_context=upstream_context
+        )
+
+        raw_response = provider.complete(system=system_prompt, user=user_prompt)
+        parsed = _extract_json(raw_response)
+
+        closure_statement_text = str(parsed.get("closure_statement", "")).strip()
+        if not closure_statement_text:
+            raise ModelProviderError(
+                f"Model response omitted the closure statement — this agent must never close a "
+                f"project silently without confirming defect status: {parsed!r}"[:500]
+            )
+
+        version_label = common.version_label(request.run_number)
+        output_dir = settings.generated_artefacts_dir / request.project_id
+
+        hypercare_plan_text = str(parsed.get("hypercare_plan", "")).strip() or (
+            "Hypercare plan not specified by the model."
+        )
+        issue_resolution_text = str(parsed.get("issue_resolution", "")).strip() or (
+            "Issue resolution not specified by the model."
+        )
+        handover_text = str(parsed.get("handover", "")).strip() or "Handover not specified by the model."
+        lessons_learned_text = str(parsed.get("lessons_learned", "")).strip() or (
+            "Lessons learned not specified by the model."
+        )
+
+        produced = hypercare_closure_renderer.render(
+            repo_root=REPO_ROOT,
+            output_dir=output_dir,
+            project_name=str(project_name),
+            version_label=version_label,
+            hypercare_plan_text=hypercare_plan_text,
+            issue_resolution_text=issue_resolution_text,
+            handover_text=handover_text,
+            lessons_learned_text=lessons_learned_text,
+            closure_statement_text=closure_statement_text,
+        )
+
+        return AgentRunResult(
+            execution_summary=f"Generated {hypercare_closure_renderer.ARTEFACT_TYPE} — project closure documented.",
+            artefacts_produced=[produced],
+            review_status="ready_for_review",
+            execution_metrics={},
+        )
+
+    def _build_user_prompt(self, *, project_name: str, task_request: str, upstream_context: str) -> str:
+        context_section = f"{upstream_context}\n\n" if upstream_context else ""
+        return (
+            f"Project name: {project_name}\n\n"
+            f"Original high-level requirement from the user:\n\"\"\"\n{task_request}\n\"\"\"\n\n"
+            f"{context_section}"
+            "Write the Hypercare & Closure Report for this project, now that it has been deployed. "
+            "Respond with ONLY a JSON object (no markdown code fences, no commentary before or after) "
+            "with exactly these keys:\n"
+            "{\n"
+            '  "hypercare_plan": "<1-2 sentences on the post-deployment hypercare window and process>",\n'
+            '  "issue_resolution": "<1-2 sentences on any issues found and how they were resolved>",\n'
+            '  "handover": "<1-2 sentences on who now owns operations, per the Governance Document>",\n'
+            '  "lessons_learned": "<1-2 sentences of genuine lessons learned from this project>",\n'
+            '  "closure_statement": "<must explicitly reference the Test Workbook / IQ Document defect '
+            'status before declaring the project approved for closure — never close silently without '
+            "this check>\"\n"
+            "}\n\n"
+            "The closure_statement is required and must not be empty — this is the final approval gate "
+            "for the entire project."
         )

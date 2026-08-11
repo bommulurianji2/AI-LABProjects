@@ -130,6 +130,15 @@ def _default_response() -> dict:
         ),
         "rollback_plan": "Prior solution version remains installed and can be re-activated.",
         "deployment_evidence": "Deployment evidence is attached per the organization's retention policy.",
+        # Hypercare & Closure
+        "hypercare_plan": "Two-week hypercare window post-deployment with daily issue triage.",
+        "issue_resolution": "No issues reported during the hypercare window.",
+        "handover": "Operational ownership transferred to the Platform Administrator role.",
+        "lessons_learned": "Early upstream-context plumbing paid off across every later phase.",
+        "closure_statement": (
+            "No unresolved critical defects — confirmed via the Test Workbook and carried forward "
+            "through the IQ Document. Project is approved for closure."
+        ),
     }
 
 
