@@ -11,6 +11,7 @@ from docx import Document
 from openpyxl import load_workbook
 
 from app.adapters import (
+    build_renderer,
     common,
     data_integration_renderer,
     governance_security_renderer,
@@ -468,10 +469,8 @@ class BuildMockAdapter:
     (confirming those findings are resolved).
     """
 
-    BUILD_REVIEW_ARTEFACT_TYPE = "build_review_report"
-    FINAL_CODE_REVIEW_ARTEFACT_TYPE = "final_code_review_report"
-    BUILD_REVIEW_TEMPLATE_RELATIVE_PATH = "04_Templates/build_review_report.docx"
-    FINAL_CODE_REVIEW_TEMPLATE_RELATIVE_PATH = "04_Templates/final_code_review_report.docx"
+    BUILD_REVIEW_ARTEFACT_TYPE = build_renderer.BUILD_REVIEW_ARTEFACT_TYPE
+    FINAL_CODE_REVIEW_ARTEFACT_TYPE = build_renderer.FINAL_CODE_REVIEW_ARTEFACT_TYPE
 
     def execute(self, request: AgentRunRequest) -> AgentRunResult:
         settings = get_settings()
@@ -485,11 +484,31 @@ class BuildMockAdapter:
         defect_entities = [f"DEF-{i + 1:03d}" for i in range(finding_count)]
 
         output_dir = settings.generated_artefacts_dir / request.project_id
-        build_review_produced = self._render_build_review(
-            project_name, version_label, findings, defect_entities, output_dir
+        build_review_produced = build_renderer.render_build_review(
+            repo_root=REPO_ROOT,
+            output_dir=output_dir,
+            project_name=str(project_name),
+            version_label=version_label,
+            implementation_assets_text=(
+                "Canvas app screens, Dataverse solution, and Power Automate flows built per the "
+                "approved design artefacts."
+            ),
+            configuration_summary_text=(
+                "Environment variables and connection references configured per the Governance Document."
+            ),
+            findings=findings,
+            defect_entities=defect_entities,
+            fixes_applied=[f"{eid}: fixed and re-verified in this mock build run." for eid in defect_entities],
         )
-        final_code_review_produced = self._render_final_code_review(
-            project_name, version_label, defect_entities, output_dir
+        final_code_review_produced = build_renderer.render_final_code_review(
+            repo_root=REPO_ROOT,
+            output_dir=output_dir,
+            project_name=str(project_name),
+            version_label=version_label,
+            review_scope_text="Full review of all implementation assets produced in this build cycle.",
+            findings_text="No new findings beyond those already tracked in the Build Review Report.",
+            defect_entities=defect_entities,
+            resolution_lines=[f"{eid}: resolved." for eid in defect_entities],
         )
 
         return AgentRunResult(
@@ -500,71 +519,6 @@ class BuildMockAdapter:
             artefacts_produced=[build_review_produced, final_code_review_produced],
             review_status="ready_for_review",
             execution_metrics={"seed": seed, "finding_count": finding_count},
-        )
-
-    def _render_build_review(self, project_name, version_label, findings, defect_entities, output_dir):
-        doc = Document(str(REPO_ROOT / self.BUILD_REVIEW_TEMPLATE_RELATIVE_PATH))
-        finding_lines = [f"{eid}: {text}" for eid, text in zip(defect_entities, findings, strict=True)]
-        for para in doc.paragraphs:
-            if "{{PROJECT_NAME}}" in para.text:
-                para.text = para.text.replace("{{PROJECT_NAME}}", str(project_name))
-            elif "{{VERSION_LABEL}}" in para.text:
-                para.text = para.text.replace("{{VERSION_LABEL}}", version_label)
-            elif "{{IMPLEMENTATION_ASSETS}}" in para.text:
-                para.text = "Canvas app screens, Dataverse solution, and Power Automate flows built per the approved design artefacts."
-            elif "{{CONFIGURATION_SUMMARY}}" in para.text:
-                para.text = "Environment variables and connection references configured per the Governance Document."
-            elif "{{BUILD_FINDINGS}}" in para.text:
-                para.text = ""
-                for line in finding_lines:
-                    doc.add_paragraph(line)
-            elif "{{FIXES_APPLIED}}" in para.text:
-                para.text = ""
-                for eid in defect_entities:
-                    doc.add_paragraph(f"{eid}: fixed and re-verified in this mock build run.")
-
-        output_path_dir = output_dir / self.BUILD_REVIEW_ARTEFACT_TYPE
-        output_path_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_path_dir / f"{version_label}.docx"
-        doc.save(output_path)
-        checksum = hashlib.sha256(output_path.read_bytes()).hexdigest()
-
-        return ProducedArtefact(
-            artefact_type=self.BUILD_REVIEW_ARTEFACT_TYPE,
-            stable_key=self.BUILD_REVIEW_ARTEFACT_TYPE,
-            file_path=str(output_path),
-            checksum=checksum,
-            entities=list(defect_entities),
-        )
-
-    def _render_final_code_review(self, project_name, version_label, defect_entities, output_dir):
-        doc = Document(str(REPO_ROOT / self.FINAL_CODE_REVIEW_TEMPLATE_RELATIVE_PATH))
-        for para in doc.paragraphs:
-            if "{{PROJECT_NAME}}" in para.text:
-                para.text = para.text.replace("{{PROJECT_NAME}}", str(project_name))
-            elif "{{VERSION_LABEL}}" in para.text:
-                para.text = para.text.replace("{{VERSION_LABEL}}", version_label)
-            elif "{{REVIEW_SCOPE}}" in para.text:
-                para.text = "Full review of all implementation assets produced in this build cycle."
-            elif "{{FINDINGS}}" in para.text:
-                para.text = "No new findings beyond those already tracked in the Build Review Report."
-            elif "{{RESOLUTION_STATUS}}" in para.text:
-                para.text = ""
-                for eid in defect_entities:
-                    doc.add_paragraph(f"{eid}: resolved.")
-
-        output_path_dir = output_dir / self.FINAL_CODE_REVIEW_ARTEFACT_TYPE
-        output_path_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_path_dir / f"{version_label}.docx"
-        doc.save(output_path)
-        checksum = hashlib.sha256(output_path.read_bytes()).hexdigest()
-
-        return ProducedArtefact(
-            artefact_type=self.FINAL_CODE_REVIEW_ARTEFACT_TYPE,
-            stable_key=self.FINAL_CODE_REVIEW_ARTEFACT_TYPE,
-            file_path=str(output_path),
-            checksum=checksum,
-            entities=list(defect_entities),
         )
 
 
