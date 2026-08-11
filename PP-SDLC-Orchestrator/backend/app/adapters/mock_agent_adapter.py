@@ -13,6 +13,7 @@ from openpyxl import load_workbook
 from app.adapters import (
     common,
     data_integration_renderer,
+    governance_security_renderer,
     requirement_specification_renderer,
     technical_design_renderer,
     ux_design_renderer,
@@ -410,8 +411,7 @@ class GovernanceSecurityMockAdapter:
     permissions, DLP, licensing, and audit content.
     """
 
-    ARTEFACT_TYPE = "governance_document"
-    TEMPLATE_RELATIVE_PATH = "04_Templates/governance_document.docx"
+    ARTEFACT_TYPE = governance_security_renderer.ARTEFACT_TYPE
 
     def execute(self, request: AgentRunRequest) -> AgentRunResult:
         settings = get_settings()
@@ -421,47 +421,35 @@ class GovernanceSecurityMockAdapter:
         version_label = _version_label(request.run_number)
         project_name = request.constraints.get("project_name", request.project_id)
 
-        doc = Document(str(REPO_ROOT / self.TEMPLATE_RELATIVE_PATH))
-        for para in doc.paragraphs:
-            if "{{PROJECT_NAME}}" in para.text:
-                para.text = para.text.replace("{{PROJECT_NAME}}", str(project_name))
-            elif "{{VERSION_LABEL}}" in para.text:
-                para.text = para.text.replace("{{VERSION_LABEL}}", version_label)
-            elif "{{IDENTITY_DESIGN}}" in para.text:
-                para.text = "Microsoft Entra ID as the identity provider; delegated permissions by default."
-            elif "{{PERMISSIONS}}" in para.text:
-                para.text = "Least privilege: delegated Graph permissions unless an application-only flow is justified."
-            elif "{{ENVIRONMENT_STRATEGY}}" in para.text:
-                para.text = "Separate dev, test, and production Power Platform environments with solution-based ALM."
-            elif "{{DLP}}" in para.text:
-                para.text = ""
-                for line in DLP_POOL:
-                    doc.add_paragraph(line)
-            elif "{{CONNECTOR_GOVERNANCE}}" in para.text:
-                para.text = "Every connector introduced by an upstream artefact requires an explicit DLP classification here before use."
-            elif "{{LICENSING}}" in para.text:
-                para.text = ""
-                for line in LICENSING_POOL:
-                    doc.add_paragraph(line)
-            elif "{{COMPLIANCE}}" in para.text:
-                para.text = "No regulated data categories identified for this mock run; revisit if PII/PHI scope changes."
-            elif "{{OPERATIONAL_OWNERSHIP}}" in para.text:
-                para.text = "Platform Administrator role owns environment health; Project Owner owns business escalation."
-            elif "{{AUDIT_REQUIREMENTS}}" in para.text:
-                para.text = "All approval and rework events are captured in the RunEvent audit log; retained per organizational policy."
-
-        output_dir = settings.generated_artefacts_dir / request.project_id / self.ARTEFACT_TYPE
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / f"{version_label}.docx"
-        doc.save(output_path)
-        checksum = hashlib.sha256(output_path.read_bytes()).hexdigest()
-
-        produced = ProducedArtefact(
-            artefact_type=self.ARTEFACT_TYPE,
-            stable_key=self.ARTEFACT_TYPE,
-            file_path=str(output_path),
-            checksum=checksum,
-            entities=[],
+        output_dir = settings.generated_artefacts_dir / request.project_id
+        produced = governance_security_renderer.render(
+            repo_root=REPO_ROOT,
+            output_dir=output_dir,
+            project_name=str(project_name),
+            version_label=version_label,
+            identity_design_text="Microsoft Entra ID as the identity provider; delegated permissions by default.",
+            permissions_text=(
+                "Least privilege: delegated Graph permissions unless an application-only flow is justified."
+            ),
+            environment_strategy_text=(
+                "Separate dev, test, and production Power Platform environments with solution-based ALM."
+            ),
+            dlp_lines=DLP_POOL,
+            connector_governance_text=(
+                "Every connector introduced by an upstream artefact requires an explicit DLP "
+                "classification here before use."
+            ),
+            licensing_lines=LICENSING_POOL,
+            compliance_text=(
+                "No regulated data categories identified for this mock run; revisit if PII/PHI scope changes."
+            ),
+            operational_ownership_text=(
+                "Platform Administrator role owns environment health; Project Owner owns business escalation."
+            ),
+            audit_requirements_text=(
+                "All approval and rework events are captured in the RunEvent audit log; retained per "
+                "organizational policy."
+            ),
         )
 
         return AgentRunResult(
