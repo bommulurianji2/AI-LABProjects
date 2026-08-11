@@ -54,6 +54,20 @@ class SubmitReviewRequest(BaseModel):
     comments: list[str] = []
 
 
+class CreateUserRequest(BaseModel):
+    email: str
+    role: str = "Reviewer"
+
+
+class UserResponse(BaseModel):
+    id: str
+    email: str
+    role: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class AgentSummary(BaseModel):
     id: str
     display_name: str

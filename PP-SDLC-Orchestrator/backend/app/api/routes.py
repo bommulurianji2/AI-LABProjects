@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -10,15 +10,18 @@ from app.api.schemas import (
     AgentSummary,
     ArtefactVersionResponse,
     CreateProjectRequest,
+    CreateUserRequest,
     ProjectResponse,
     RunResponse,
     StartRunRequest,
     SubmitReviewRequest,
+    UserResponse,
 )
 from app.db.session import get_session
 from app.models.agent import AgentRun
 from app.models.artefact import ArtefactVersion
 from app.models.project import Project
+from app.models.user import User
 from app.orchestrator.service import OrchestrationError, OrchestratorService
 
 router = APIRouter()
@@ -33,6 +36,29 @@ _DOWNLOAD_MEDIA_TYPES = {
 @router.get("/agents", response_model=list[AgentSummary])
 def list_agents(registry: AgentRegistry = Depends(get_registry)):
     return [AgentSummary(**m.model_dump(include={"id", "display_name", "kind", "phase", "version"})) for m in registry.list_agents()]
+
+
+@router.get("/users", response_model=list[UserResponse])
+def list_users(session: Session = Depends(get_session)):
+    return session.query(User).order_by(User.created_at.asc()).all()
+
+
+@router.post("/users", response_model=UserResponse)
+def create_user(body: CreateUserRequest, response: Response, session: Session = Depends(get_session)):
+    """Get-or-create by email — reviewers are picked from a short internal
+    list, not self-registered, so treating a repeat email as "the same
+    reviewer" is friendlier than a 409 for this tool's actual usage pattern.
+    """
+    existing = session.query(User).filter_by(email=body.email).first()
+    if existing is not None:
+        response.status_code = 200
+        return existing
+
+    user = User(email=body.email, role=body.role)
+    session.add(user)
+    session.commit()
+    response.status_code = 201
+    return user
 
 
 @router.post("/projects", response_model=ProjectResponse, status_code=201)

@@ -20,6 +20,7 @@ from app.models.agent import AgentDef, AgentRun, RunEvent
 from app.models.artefact import Artefact, ArtefactVersion
 from app.models.project import Project
 from app.models.review import Review, ReviewComment
+from app.models.user import User
 from app.orchestrator.state_machines import advance_phase, transition_run
 
 logger = logging.getLogger(__name__)
@@ -185,6 +186,13 @@ class OrchestratorService:
     ) -> Project:
         if run.state != RunState.WAITING_FOR_HUMAN_REVIEW.value:
             raise OrchestrationError(f"Run is {run.state!r}, not waiting for human review")
+
+        # Reviewer identity must resolve to a real, known user — not just
+        # any string the caller happens to send — since a Review row is a
+        # governance record, not free text. Checked before any state
+        # mutation so a bad reviewer_id has no side effects.
+        if self.session.get(User, reviewer_id) is None:
+            raise OrchestrationError(f"Reviewer {reviewer_id!r} does not exist — create the reviewer first.")
 
         run.state = transition_run(RunState.WAITING_FOR_HUMAN_REVIEW, RunState.IN_REVIEW).value
         self._log_event(run, "review_opened")
