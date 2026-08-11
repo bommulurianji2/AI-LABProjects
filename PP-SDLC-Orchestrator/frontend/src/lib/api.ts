@@ -1,4 +1,4 @@
-import type { AgentSummary, ArtefactVersion, Project, ReviewDecision, Run, User } from "./types";
+import type { AgentSummary, ArtefactVersion, Project, ReviewDecision, Run, RunHistoryEntry, User } from "./types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
@@ -38,6 +38,11 @@ export const api = {
     request<Project>("/projects", { method: "POST", body: JSON.stringify({ name }) }),
 
   getProject: (projectId: string) => request<Project>(`/projects/${projectId}`),
+
+  // Every run this project has ever had, across every phase — used to
+  // restore an in-flight review after a page refresh and to render the
+  // full run-history/audit list.
+  listProjectRuns: (projectId: string) => request<RunHistoryEntry[]>(`/projects/${projectId}/runs`),
 
   startRun: (projectId: string, taskRequest: string) =>
     request<Run>(`/projects/${projectId}/runs`, {

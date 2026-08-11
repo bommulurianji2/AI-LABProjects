@@ -4,6 +4,7 @@ DB state directly; only this service does, via the state machines in
 `state_machines.py`.
 """
 
+import json
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -115,7 +116,10 @@ class OrchestratorService:
         run.state = transition_run(RunState.READY, RunState.QUEUED).value
         run.state = transition_run(RunState.QUEUED, RunState.RUNNING).value
         run.started_at = datetime.now(UTC)
-        self._log_event(run, "run_started")
+        # task_request isn't stored on AgentRun itself (no schema migration
+        # needed for a field the run-history API can read back out of the
+        # existing audit log instead) — see routes.py::list_project_runs.
+        self._log_event(run, "run_started", json.dumps({"task_request": task_request}))
         self.session.commit()
 
         adapter = entry.adapter_class()
