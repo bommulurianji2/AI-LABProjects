@@ -92,9 +92,19 @@ def _default_response() -> dict:
         # Build
         "implementation_assets": "Canvas app screens, Dataverse solution, and Power Automate flows built.",
         "configuration_summary": "Environment variables and connection references configured per governance.",
+        # Shared by Build and Validation/QA — Validation/QA additionally
+        # requires "remediation_owner" on each entry; Build ignores it.
         "findings": [
-            {"reference": "SCR-002", "description": "Request Form screen was missing client-side validation."},
+            {
+                "reference": "SCR-002",
+                "description": "Request Form screen was missing client-side validation.",
+                "remediation_owner": "Build Agent",
+            },
         ],
+        # Validation / QA
+        "validation_scope": "Independent validation of all approved design and build artefacts.",
+        "standards_assessment": "Assessed against accessibility, naming convention, and traceability standards.",
+        "overall_verdict": "Pass with findings — no critical defects block progression.",
     }
 
 
