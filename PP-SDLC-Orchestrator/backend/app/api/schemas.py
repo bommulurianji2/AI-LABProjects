@@ -50,6 +50,7 @@ class RunHistoryEntry(BaseModel):
     state: str
     started_at: datetime | None
     ended_at: datetime | None
+    task_request: str | None
     review_decision: str | None
     artefact_types: list[str]
 

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -22,6 +23,7 @@ from app.db.session import get_session
 from app.models.agent import AgentRun
 from app.models.artefact import ArtefactVersion
 from app.models.project import Project
+from app.models.agent import RunEvent
 from app.models.review import Review
 from app.models.user import User
 from app.orchestrator.service import OrchestrationError, OrchestratorService
@@ -119,6 +121,16 @@ def list_project_runs(project_id: str, session: Session = Depends(get_session)):
             if latest_review is not None:
                 review_decision = latest_review.decision
 
+        task_request = None
+        started_event = (
+            session.query(RunEvent).filter_by(run_id=run.id, type="run_started").order_by(RunEvent.ts.asc()).first()
+        )
+        if started_event is not None:
+            try:
+                task_request = json.loads(started_event.payload_json).get("task_request")
+            except (json.JSONDecodeError, AttributeError):
+                task_request = None
+
         entries.append(
             RunHistoryEntry(
                 id=run.id,
@@ -129,6 +141,7 @@ def list_project_runs(project_id: str, session: Session = Depends(get_session)):
                 state=run.state,
                 started_at=run.started_at,
                 ended_at=run.ended_at,
+                task_request=task_request,
                 review_decision=review_decision,
                 artefact_types=[v.artefact_type for v in versions],
             )

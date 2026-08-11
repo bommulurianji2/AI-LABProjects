@@ -31,12 +31,14 @@ def test_run_history_lists_every_run_across_phases(api_client):
     assert len(history) == 2
     assert history[0]["id"] == analysis_run["id"]
     assert history[0]["phase"] == "analysis"
+    assert history[0]["task_request"] == "Draft requirements"
     assert history[0]["review_decision"] == "approved"
     assert history[0]["artefact_types"] == ["requirement_specification"]
     assert history[0]["state"] == "completed"
 
     assert history[1]["id"] == ux_run["id"]
     assert history[1]["phase"] == "ux_design"
+    assert history[1]["task_request"] == "Design the experience"
     assert history[1]["review_decision"] is None  # not yet reviewed
     assert set(history[1]["artefact_types"]) == {"ux_design_specification", "ux_interactive_prototype"}
     assert history[1]["state"] == "waiting_for_human_review"
@@ -77,3 +79,29 @@ def test_run_history_for_project_with_no_runs_is_empty(api_client):
     history = api_client.get(f"/projects/{project['id']}/runs").json()
 
     assert history == []
+
+
+def test_run_history_task_request_survives_a_failed_run(api_client, monkeypatch):
+    """task_request must be readable even for a run that never reached
+    completion — it's read from the run_started audit event, logged before
+    the adapter is even invoked, not from anything the adapter produces.
+    """
+    from app.adapters.model_providers import factory as model_provider_factory
+    from app.adapters.model_providers.base import ModelProviderError
+
+    class _AlwaysFailsProvider:
+        def complete(self, *, system, user):
+            raise ModelProviderError("simulated network failure")
+
+    monkeypatch.setattr(model_provider_factory, "get_model_provider", lambda: _AlwaysFailsProvider())
+
+    project = api_client.post("/projects", json={"name": "Failed Run Task Visibility"}).json()
+    resp = api_client.post(
+        f"/projects/{project['id']}/runs", json={"task_request": "This run is doomed to fail"}
+    )
+    assert resp.status_code == 409  # OrchestrationError wraps the adapter failure
+
+    history = api_client.get(f"/projects/{project['id']}/runs").json()
+    assert len(history) == 1
+    assert history[0]["state"] == "failed"
+    assert history[0]["task_request"] == "This run is doomed to fail"
