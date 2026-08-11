@@ -3,6 +3,59 @@
 Living record of what's done, tested, deferred, and blocked. Update this every session — do not let it
 go stale.
 
+## Session 14 — 2026-08-11
+
+Continues the LLM rollout to the ninth agent, Deploy — the first agent whose guardrail is a genuine hard
+business rule ("must not deploy unapproved or failed components") rather than a content-quality
+guideline, and the first to require a real fix in shared infrastructure before it could be implemented
+correctly.
+
+### Completed
+
+- **Fixed `document_text.extract_text()` for `.xlsx` files** (`app/adapters/document_text.py`): previously
+  any non-`.docx` file fell back to a raw text read, which for a binary zip format like `.xlsx` returns
+  garbled bytes, not readable content. This was silently wrong from the moment the Test Agent started
+  producing real `.xlsx` output in session 13, but nothing had needed to *read* that upstream text yet.
+  Deploy's guardrail — check the Test Workbook's Defects sheet for open items — made it load-bearing.
+  Added an openpyxl-based branch that dumps each sheet's non-empty cell values row by row, with 4 new
+  unit tests (`test_document_text.py`) covering docx, xlsx-across-sheets, truncation, and the raw-read
+  fallback for unknown extensions.
+- Extracted `DeployMockAdapter`'s rendering into a shared `app/adapters/deploy_renderer.py` (single
+  `render()` function, no stable-ID entities — same shape as Governance & Security).
+- **`DeployLlmAdapter`** (`llm_agent_adapter.py`): reads all ten prior artefact types via
+  `_format_multi_artefact_context`, in particular the Test Workbook's now-correctly-extracted Defects
+  sheet. The model reports `defects_clear: true/false`; when false, the adapter raises a new
+  `DeploymentBlockedError` (a `ModelProviderError` subclass) with the model's defect summary rather than
+  rendering an IQ Document — the run fails with the blocking reason logged, exactly like any other
+  adapter failure, but for a business reason rather than a malformed response.
+- **`03_Agent_Skills/deploy/manifest.yaml` now declares `runtime: llm`** — the ninth real agent. `SKILL.md`
+  updated to state the hard-block rule explicitly and documents `DeploymentBlockedError` in its
+  "Implementation note".
+- Extended `FakeModelProvider`'s default response with `defects_clear: true` (plus the deployment text
+  fields) so the existing full-suite chain tests keep exercising the normal, non-blocked path.
+
+### Tests executed (all passing — 383 backend tests, 11 new)
+
+- `test_document_text.py` (4 cases): docx paragraph extraction, xlsx multi-sheet row extraction,
+  max_chars truncation, raw-read fallback for unrecognized extensions.
+- `test_deploy_llm_adapter.py` (7 cases): normal rendering when defects are clear, `DeploymentBlockedError`
+  raised with the real defect summary when they aren't, the error is a `ModelProviderError` subclass,
+  upstream Test Workbook text actually reaches the prompt, graceful omission with no upstream text, a
+  missing defect summary falls back to a generic message, malformed JSON raises.
+
+### Manual verification with the real OpenRouter key
+
+Ran a full nine-phase chain (Analysis → ... → Test → Deploy) for a fictitious "Church Van Fleet
+Scheduler" project. The real Test Agent run produced four open defects (a realistic outcome, same as
+session 13's finding); Deploy correctly refused to proceed, returning an HTTP 409 whose message named
+each open defect by ID (`DEF-001` through `DEF-004`) with its upstream traceability (`REQ-008`, `ADR-003`,
+`ADR-005`, `DATA-001`, `DATA-004`) — confirming the hard-block guardrail actually fires against a real
+model's real assessment of real upstream content, not just in the unit-test-injected case.
+
+### Deferred / next
+
+- One agent remaining on `runtime: mock`: Hypercare & Closure — the last one in the 11-agent rollout.
+
 ## Session 13 — 2026-08-11
 
 Continues the LLM rollout to the eighth agent, Test — the first Excel artefact (rather than Word) to get

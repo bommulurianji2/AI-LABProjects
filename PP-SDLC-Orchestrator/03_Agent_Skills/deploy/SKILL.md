@@ -23,5 +23,18 @@ blocker rather than deploying anyway.
 
 - Pre-deployment verification must explicitly reference the Test Workbook's zero-defect status before
   describing deployment steps.
-- This agent's `runtime: mock` (see `manifest.yaml`) fills the template deterministically without a live
-  model — see `backend/app/adapters/mock_agent_adapter.py::DeployMockAdapter`.
+- If any defect in the Test Workbook's Defects sheet has an "Open" status, you must refuse to deploy —
+  report the blocking defects instead of describing deployment steps. This is a hard block, not a
+  judgment call.
+
+## Implementation note
+
+This file is used as the real system prompt when `runtime: llm` is set in `manifest.yaml` (see
+`backend/app/adapters/llm_agent_adapter.py::DeployLlmAdapter`) — every instruction above is sent directly
+to the model, along with every upstream artefact's actual text, including the Test Workbook's real
+Defects sheet content. When the model reports open defects, the adapter raises `DeploymentBlockedError`
+rather than rendering an IQ Document — the run fails with the blocking reason logged, per the "must not
+deploy unapproved or failed components" guardrail. A `runtime: mock` fallback also exists
+(`backend/app/adapters/mock_agent_adapter.py::DeployMockAdapter`) for deterministic, network-free
+testing; both return the identical `AgentRunResult` envelope described in
+`03_Agent_Skills/AGENT_CONTRACT.md` on the success path.

@@ -14,6 +14,7 @@ from app.adapters import (
     build_renderer,
     common,
     data_integration_renderer,
+    deploy_renderer,
     governance_security_renderer,
     requirement_specification_renderer,
     technical_design_renderer,
@@ -986,4 +987,127 @@ class TestAgentLlmAdapter:
             "against a correct requirement is a defect, never a reason to omit or loosen the test. Do not "
             "add your own numbering or IDs — the calling system assigns each test case and defect its own "
             "stable ID itself."
+        )
+
+
+class DeploymentBlockedError(ModelProviderError):
+    """Raised when the Deploy Agent correctly refuses to deploy because the
+    Test Workbook shows open defects — a business-rule refusal, not a
+    malformed-response failure, but it needs to fail the run the same way
+    (see OrchestratorService.start_run: any adapter exception -> run
+    FAILED with the reason logged), since this agent must never silently
+    deploy over known-open defects.
+    """
+
+
+class DeployLlmAdapter:
+    """Real LLM-backed runtime for the Deploy Agent.
+
+    Reads every upstream artefact present via _format_multi_artefact_context,
+    in particular the Test Workbook (now readable as real text — see
+    document_text.extract_text's .xlsx branch, added specifically to make
+    this guardrail checkable: an .xlsx read as raw bytes would be garbage,
+    not text an LLM could reason about). Refuses to deploy if the model
+    determines open defects exist, per this agent's "must not deploy
+    unapproved or failed components" guardrail.
+    """
+
+    SKILL_RELATIVE_PATH = "03_Agent_Skills/deploy/SKILL.md"
+    CONTEXT_ARTEFACT_TYPES = [
+        "requirement_specification",
+        "ux_design_specification",
+        "solution_approach",
+        "architecture_handbook",
+        "data_design_document",
+        "governance_document",
+        "build_review_report",
+        "final_code_review_report",
+        "validation_report",
+        "test_workbook",
+    ]
+
+    def __init__(self, provider: ModelProvider | None = None):
+        self._provider = provider
+
+    def execute(self, request: AgentRunRequest) -> AgentRunResult:
+        provider = self._provider or model_provider_factory.get_model_provider()
+        settings = get_settings()
+        project_name = request.constraints.get("project_name", request.project_id)
+
+        system_prompt = (REPO_ROOT / self.SKILL_RELATIVE_PATH).read_text(encoding="utf-8")
+        upstream_context = _format_multi_artefact_context(request.upstream_artefacts_text, self.CONTEXT_ARTEFACT_TYPES)
+        user_prompt = self._build_user_prompt(
+            project_name=str(project_name), task_request=request.task_request, upstream_context=upstream_context
+        )
+
+        raw_response = provider.complete(system=system_prompt, user=user_prompt)
+        parsed = _extract_json(raw_response)
+
+        defects_clear = bool(parsed.get("defects_clear", False))
+        if not defects_clear:
+            summary = str(parsed.get("open_defect_summary", "")).strip() or "unspecified open defects"
+            raise DeploymentBlockedError(
+                f"Deploy Agent refused to deploy: the Test Workbook shows open defects ({summary}). "
+                "Resolve the defects and re-run Test before deploying."
+            )
+
+        version_label = common.version_label(request.run_number)
+        output_dir = settings.generated_artefacts_dir / request.project_id
+
+        deployment_configuration_text = str(parsed.get("deployment_configuration", "")).strip() or (
+            "Deployment configuration not specified by the model."
+        )
+        pre_deployment_verification_text = str(parsed.get("pre_deployment_verification", "")).strip() or (
+            "Pre-deployment verification not specified by the model."
+        )
+        rollback_plan_text = str(parsed.get("rollback_plan", "")).strip() or (
+            "Rollback plan not specified by the model."
+        )
+        deployment_evidence_text = str(parsed.get("deployment_evidence", "")).strip() or (
+            "Deployment evidence not specified by the model."
+        )
+
+        produced = deploy_renderer.render(
+            repo_root=REPO_ROOT,
+            output_dir=output_dir,
+            project_name=str(project_name),
+            version_label=version_label,
+            deployment_configuration_text=deployment_configuration_text,
+            pre_deployment_verification_text=pre_deployment_verification_text,
+            rollback_plan_text=rollback_plan_text,
+            deployment_evidence_text=deployment_evidence_text,
+        )
+
+        return AgentRunResult(
+            execution_summary=(
+                f"Generated {deploy_renderer.ARTEFACT_TYPE} — Test Workbook defects clear, deployment proceeded."
+            ),
+            artefacts_produced=[produced],
+            review_status="ready_for_review",
+            execution_metrics={"defects_clear": True},
+        )
+
+    def _build_user_prompt(self, *, project_name: str, task_request: str, upstream_context: str) -> str:
+        context_section = f"{upstream_context}\n\n" if upstream_context else ""
+        return (
+            f"Project name: {project_name}\n\n"
+            f"Original high-level requirement from the user:\n\"\"\"\n{task_request}\n\"\"\"\n\n"
+            f"{context_section}"
+            "Examine the Test Workbook above (its Defects sheet rows, if any) and decide whether "
+            "deployment may proceed. You must not deploy if any defect's Status is \"Open\" — that is a "
+            "hard block, not a judgment call. "
+            "Respond with ONLY a JSON object (no markdown code fences, no commentary before or after) "
+            "with exactly these keys:\n"
+            "{\n"
+            '  "defects_clear": <true if the Test Workbook has zero open defects, false otherwise>,\n'
+            '  "open_defect_summary": "<if defects_clear is false, list the open defect IDs and why '
+            'they block deployment; otherwise an empty string>",\n'
+            '  "deployment_configuration": "<1-2 sentences on how the solution is deployed>",\n'
+            '  "pre_deployment_verification": "<must explicitly state the Test Workbook shows zero open '
+            'defects, then describe any other pre-deployment checks>",\n'
+            '  "rollback_plan": "<1-2 sentences on how to roll back if deployment fails>",\n'
+            '  "deployment_evidence": "<1-2 sentences on what evidence is captured>"\n'
+            "}\n\n"
+            "If defects_clear is false, the deployment fields are ignored — focus your response on an "
+            "accurate open_defect_summary instead of filling them in."
         )
