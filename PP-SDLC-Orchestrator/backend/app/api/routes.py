@@ -12,6 +12,7 @@ from app.api.schemas import (
     CreateProjectRequest,
     CreateUserRequest,
     ProjectResponse,
+    RunHistoryEntry,
     RunResponse,
     StartRunRequest,
     SubmitReviewRequest,
@@ -21,6 +22,7 @@ from app.db.session import get_session
 from app.models.agent import AgentRun
 from app.models.artefact import ArtefactVersion
 from app.models.project import Project
+from app.models.review import Review
 from app.models.user import User
 from app.orchestrator.service import OrchestrationError, OrchestratorService
 
@@ -82,6 +84,56 @@ def get_project(project_id: str, session: Session = Depends(get_session)):
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     return project
+
+
+@router.get("/projects/{project_id}/runs", response_model=list[RunHistoryEntry])
+def list_project_runs(project_id: str, session: Session = Depends(get_session)):
+    """Every run this project has ever had, across every phase — the
+    run-history/audit view that was missing since session 1 (a page
+    refresh mid-review previously lost track of the in-flight run
+    entirely; the frontend now uses this to restore it).
+    """
+    project = session.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    runs = (
+        session.query(AgentRun)
+        .filter_by(project_id=project_id)
+        .order_by(AgentRun.started_at.asc())
+        .all()
+    )
+
+    entries = []
+    for run in runs:
+        versions = session.query(ArtefactVersion).filter_by(run_id=run.id).all()
+        review_decision = None
+        if versions:
+            version_ids = [v.id for v in versions]
+            latest_review = (
+                session.query(Review)
+                .filter(Review.artefact_version_id.in_(version_ids))
+                .order_by(Review.decided_at.desc())
+                .first()
+            )
+            if latest_review is not None:
+                review_decision = latest_review.decision
+
+        entries.append(
+            RunHistoryEntry(
+                id=run.id,
+                project_id=run.project_id,
+                agent_id=run.agent_id,
+                phase=run.phase,
+                run_number=run.run_number,
+                state=run.state,
+                started_at=run.started_at,
+                ended_at=run.ended_at,
+                review_decision=review_decision,
+                artefact_types=[v.artefact_type for v in versions],
+            )
+        )
+    return entries
 
 
 @router.post("/projects/{project_id}/runs", response_model=RunResponse, status_code=201)

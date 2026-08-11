@@ -35,6 +35,25 @@ class RunResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class RunHistoryEntry(BaseModel):
+    """A richer view of a run for the history/audit list — includes the
+    review decision and artefact types produced, computed at the API layer
+    from Review/ArtefactVersion rows rather than stored redundantly on
+    AgentRun itself.
+    """
+
+    id: str
+    project_id: str
+    agent_id: str
+    phase: str
+    run_number: int
+    state: str
+    started_at: datetime | None
+    ended_at: datetime | None
+    review_decision: str | None
+    artefact_types: list[str]
+
+
 class ArtefactVersionResponse(BaseModel):
     id: str
     artefact_id: str
