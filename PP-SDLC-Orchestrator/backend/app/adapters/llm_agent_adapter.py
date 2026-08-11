@@ -18,6 +18,7 @@ from app.adapters import (
     requirement_specification_renderer,
     technical_design_renderer,
     ux_design_renderer,
+    validation_qa_renderer,
 )
 from app.adapters.model_providers import factory as model_provider_factory
 from app.adapters.model_providers.base import ModelProvider, ModelProviderError
@@ -745,4 +746,117 @@ class BuildLlmAdapter:
             "Produce at least 1 and at most 5 findings, each referencing a specific ID from the upstream "
             "artefacts above rather than vague prose. Do not add your own numbering or IDs beyond the "
             "\"reference\" field — the calling system assigns each finding its own stable ID itself."
+        )
+
+
+class ValidationQaLlmAdapter:
+    """Real LLM-backed runtime for the Validation / QA Agent.
+
+    Like Build, this reads every upstream artefact present (not just the
+    Final Code Review Report named as its formal manifest input) via
+    _format_multi_artefact_context, since validation findings must cite
+    entities from any prior phase.
+    """
+
+    SKILL_RELATIVE_PATH = "03_Agent_Skills/validation_qa/SKILL.md"
+    CONTEXT_ARTEFACT_TYPES = [
+        "requirement_specification",
+        "ux_design_specification",
+        "solution_approach",
+        "architecture_handbook",
+        "data_design_document",
+        "governance_document",
+        "build_review_report",
+        "final_code_review_report",
+    ]
+
+    def __init__(self, provider: ModelProvider | None = None):
+        self._provider = provider
+
+    def execute(self, request: AgentRunRequest) -> AgentRunResult:
+        provider = self._provider or model_provider_factory.get_model_provider()
+        settings = get_settings()
+        project_name = request.constraints.get("project_name", request.project_id)
+
+        system_prompt = (REPO_ROOT / self.SKILL_RELATIVE_PATH).read_text(encoding="utf-8")
+        upstream_context = _format_multi_artefact_context(request.upstream_artefacts_text, self.CONTEXT_ARTEFACT_TYPES)
+        user_prompt = self._build_user_prompt(
+            project_name=str(project_name), task_request=request.task_request, upstream_context=upstream_context
+        )
+
+        raw_response = provider.complete(system=system_prompt, user=user_prompt)
+        parsed = _extract_json(raw_response)
+
+        raw_findings = parsed.get("findings", [])
+        findings: list[str] = []
+        for entry in raw_findings:
+            if not isinstance(entry, dict):
+                continue
+            reference = str(entry.get("reference", "")).strip()
+            description = str(entry.get("description", "")).strip()
+            owner = str(entry.get("remediation_owner", "")).strip()
+            if not description or not owner:
+                continue
+            prefix = f"{reference}: " if reference else ""
+            findings.append(f"{prefix}{description} (Remediation owner: {owner})")
+
+        if not findings:
+            raise ModelProviderError(
+                f"Model response contained no findings with both a description and a remediation "
+                f"owner: {parsed!r}"[:500]
+            )
+
+        version_label = common.version_label(request.run_number)
+        output_dir = settings.generated_artefacts_dir / request.project_id
+
+        validation_scope_text = str(parsed.get("validation_scope", "")).strip() or (
+            "Validation scope not specified by the model."
+        )
+        standards_assessment_text = str(parsed.get("standards_assessment", "")).strip() or (
+            "Standards assessment not specified by the model."
+        )
+        overall_verdict_text = str(parsed.get("overall_verdict", "")).strip() or (
+            "Overall verdict not specified by the model."
+        )
+
+        produced = validation_qa_renderer.render(
+            repo_root=REPO_ROOT,
+            output_dir=output_dir,
+            project_name=str(project_name),
+            version_label=version_label,
+            validation_scope_text=validation_scope_text,
+            standards_assessment_text=standards_assessment_text,
+            findings=findings,
+            overall_verdict_text=overall_verdict_text,
+        )
+
+        return AgentRunResult(
+            execution_summary=(
+                f"Generated {validation_qa_renderer.ARTEFACT_TYPE} with {len(findings)} LLM-generated findings."
+            ),
+            artefacts_produced=[produced],
+            review_status="ready_for_review",
+            execution_metrics={"finding_count": len(findings)},
+        )
+
+    def _build_user_prompt(self, *, project_name: str, task_request: str, upstream_context: str) -> str:
+        context_section = f"{upstream_context}\n\n" if upstream_context else ""
+        return (
+            f"Project name: {project_name}\n\n"
+            f"Original high-level requirement from the user:\n\"\"\"\n{task_request}\n\"\"\"\n\n"
+            f"{context_section}"
+            "Independently validate the approved artefacts above against organizational standards "
+            "(accessibility, naming conventions, traceability). "
+            "Respond with ONLY a JSON object (no markdown code fences, no commentary before or after) "
+            "with exactly these keys:\n"
+            "{\n"
+            '  "validation_scope": "<1-2 sentences on what was validated>",\n'
+            '  "standards_assessment": "<1-2 sentences on which standards were checked>",\n'
+            '  "findings": [{"reference": "<upstream ID this finding concerns, e.g. DEF-002 or ADR-001>", '
+            '"description": "<the finding>", "remediation_owner": "<the agent/phase that should address it>"}, '
+            '"..."],\n'
+            '  "overall_verdict": "<1-2 sentences: pass / pass with findings / fail, and why>"\n'
+            "}\n\n"
+            "Produce at least 1 and at most 5 findings, each citing a specific upstream ID and naming a "
+            "remediation owner — you validate and report, you never fix content directly."
         )
