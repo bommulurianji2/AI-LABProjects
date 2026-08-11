@@ -105,6 +105,22 @@ def _default_response() -> dict:
         "validation_scope": "Independent validation of all approved design and build artefacts.",
         "standards_assessment": "Assessed against accessibility, naming convention, and traceability standards.",
         "overall_verdict": "Pass with findings — no critical defects block progression.",
+        # Test
+        "test_cases": [
+            {
+                "type": "OQ",
+                "description": "Verify the Request Form submits successfully with all required fields.",
+                "related_entity": "REQ-001",
+                "status": "Passed",
+            },
+            {
+                "type": "UAT",
+                "description": "Verify an end user can track a submitted request to resolution.",
+                "related_entity": "REQ-002",
+                "status": "Passed",
+            },
+        ],
+        "defects": [],
     }
 
 

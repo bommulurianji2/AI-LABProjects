@@ -3,6 +3,62 @@
 Living record of what's done, tested, deferred, and blocked. Update this every session — do not let it
 go stale.
 
+## Session 13 — 2026-08-11
+
+Continues the LLM rollout to the eighth agent, Test — the first Excel artefact (rather than Word) to get
+a real LLM adapter, and the first agent where a "Failed" outcome is a legitimate, expected result rather
+than something to avoid.
+
+### Completed
+
+- Extracted `TestAgentMockAdapter`'s rendering into a shared `app/adapters/test_renderer.py`, exercising
+  the openpyxl path this time instead of python-docx — same principle, different library. Removed the
+  now-unused `openpyxl.load_workbook` import from `mock_agent_adapter.py`.
+- **`TestAgentLlmAdapter`** (`llm_agent_adapter.py`): reads all nine prior artefact types via
+  `_format_multi_artefact_context` so test cases trace to real upstream IDs. Per this agent's guardrail
+  ("a failing test against a correct requirement is a defect, not a reason to loosen the requirement"),
+  `status: "Failed"` is accepted as a normal outcome — the adapter doesn't force everything to pass — and
+  writes a corresponding row to the Defects sheet for each failure.
+- **`03_Agent_Skills/test/manifest.yaml` now declares `runtime: llm`** — the eighth real agent. `SKILL.md`
+  updated with the same grounding guardrail and multi-artefact "Implementation note".
+- Extended `FakeModelProvider`'s default response with Test's schema keys (`test_cases`, `defects`).
+
+### Bugs found via testing and fixed
+
+1. **Pytest collection warning**: `TestAgentMockAdapter`/`TestAgentLlmAdapter` are correctly-named
+   classes (Test Agent + runtime + Adapter, same convention as every other agent), but their names
+   happen to start with "Test", matching pytest's default `Test*` class-discovery pattern. Once a test
+   file imported `TestAgentLlmAdapter` by name, pytest tried to collect it as a test class and warned
+   about its `__init__` constructor. Fixed by setting `__test__ = False` on both classes — the standard
+   pytest opt-out — rather than renaming the agent to avoid a naming collision with a test framework
+   convention that has nothing to do with the domain.
+2. **Stale seeded-count assertion**: `test_test_agent_chain.py` hardcoded `len(data_rows) == 3` (the
+   mock's fixed case count) and asserted all rows "Passed" — both mock-specific. Updated to check
+   structure instead (at least one case, every case has a `Related Entity`), matching how
+   `test_build_chain.py` and `test_validation_qa_chain.py` were already updated in sessions 11–12 when
+   their agents switched off `runtime: mock`.
+
+### Tests executed (all passing — 372 backend tests, 7 new)
+
+- `test_test_agent_llm_adapter.py` (7 cases): real workbook rendering with a mix of Passed/Failed status
+  and a matching Defects row, multiple upstream artefacts actually present in the prompt, graceful
+  omission when no upstream text exists, a case with no `related_entity` is dropped, missing-cases
+  raises, ID-prefix-stripping regression on `related_entity`, malformed JSON raises.
+
+### Manual verification with the real OpenRouter key
+
+Ran a full eight-phase chain (Analysis → UX Design → Technical Design → Data & Integration → Governance
+& Security → Build → Validation/QA → Test) for a fictitious "Community Pool Lane Booking" project. The
+generated Test Workbook produced 8 test cases spanning OQ/SIT/PQ/UAT, each tracing to a real upstream ID
+(`DATA-001`, `REQ-005`, `SCR-001`, `SCR-003`, `REQ-004`, `REQ-007`, `DATA-005`); 4 of the 8 legitimately
+failed, and each failure produced a linked Defects-sheet row whose description itself cited the specific
+Validation Report finding and upstream gap that caused it — confirming the "failure is a valid outcome,
+not something to suppress" guardrail actually holds under a real model.
+
+### Deferred / next
+
+- Remaining agents still on `runtime: mock`: Deploy, Hypercare & Closure.
+
 ## Session 12 — 2026-08-11
 
 Continues the LLM rollout to the seventh agent, Validation/QA — reuses the multi-artefact context

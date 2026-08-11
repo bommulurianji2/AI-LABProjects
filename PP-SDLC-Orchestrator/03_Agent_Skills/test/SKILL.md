@@ -23,5 +23,15 @@ defect, not a reason to loosen the requirement.
 
 - Every test case gets a stable ID (`TC-00N`) and a `Related Entity` column tracing back to the
   requirement/screen/decision it verifies — never a test case with no traceability.
-- This agent's `runtime: mock` (see `manifest.yaml`) fills the template deterministically without a live
-  model — see `backend/app/adapters/mock_agent_adapter.py::TestAgentMockAdapter`.
+- Ground every test case in the actual approved upstream artefacts provided to you, across every prior
+  phase — don't invent test cases with no basis upstream.
+
+## Implementation note
+
+This file is used as the real system prompt when `runtime: llm` is set in `manifest.yaml` (see
+`backend/app/adapters/llm_agent_adapter.py::TestAgentLlmAdapter`) — every instruction above is sent
+directly to the model, along with every upstream artefact's actual text (not just the Validation Report
+named above as the formal manifest input). A `runtime: mock` fallback also exists
+(`backend/app/adapters/mock_agent_adapter.py::TestAgentMockAdapter`) for deterministic, network-free
+testing; both return the identical `AgentRunResult` envelope described in
+`03_Agent_Skills/AGENT_CONTRACT.md`.

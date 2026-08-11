@@ -8,7 +8,6 @@ code never branches on which produced it.
 import hashlib
 
 from docx import Document
-from openpyxl import load_workbook
 
 from app.adapters import (
     build_renderer,
@@ -17,6 +16,7 @@ from app.adapters import (
     governance_security_renderer,
     requirement_specification_renderer,
     technical_design_renderer,
+    test_renderer,
     ux_design_renderer,
     validation_qa_renderer,
 )
@@ -578,8 +578,11 @@ class TestAgentMockAdapter:
     test cases traced to upstream entities, all passing, zero defects.
     """
 
-    ARTEFACT_TYPE = "test_workbook"
-    TEMPLATE_RELATIVE_PATH = "04_Templates/test_workbook.xlsx"
+    # Tells pytest not to try collecting this as a test class — its name
+    # happens to start with "Test" (it's the Test Agent, not a test suite).
+    __test__ = False
+
+    ARTEFACT_TYPE = test_renderer.ARTEFACT_TYPE
 
     def execute(self, request: AgentRunRequest) -> AgentRunResult:
         settings = get_settings()
@@ -591,23 +594,15 @@ class TestAgentMockAdapter:
         cases = [TEST_CASE_POOL[(c_start + i) % len(TEST_CASE_POOL)] for i in range(case_count)]
         case_entities = [f"TC-{i + 1:03d}" for i in range(case_count)]
 
-        wb = load_workbook(str(REPO_ROOT / self.TEMPLATE_RELATIVE_PATH))
-        cases_ws = wb["Test Cases"]
-        for eid, (test_type, description, related_entity) in zip(case_entities, cases, strict=True):
-            cases_ws.append([eid, test_type, description, related_entity, "Passed"])
-
-        output_dir = settings.generated_artefacts_dir / request.project_id / self.ARTEFACT_TYPE
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / f"{version_label}.xlsx"
-        wb.save(output_path)
-        checksum = hashlib.sha256(output_path.read_bytes()).hexdigest()
-
-        produced = ProducedArtefact(
-            artefact_type=self.ARTEFACT_TYPE,
-            stable_key=self.ARTEFACT_TYPE,
-            file_path=str(output_path),
-            checksum=checksum,
-            entities=list(case_entities),
+        output_dir = settings.generated_artefacts_dir / request.project_id
+        produced = test_renderer.render(
+            repo_root=REPO_ROOT,
+            output_dir=output_dir,
+            version_label=version_label,
+            cases=cases,
+            case_entities=case_entities,
+            case_statuses=["Passed"] * case_count,
+            defects=[],
         )
 
         return AgentRunResult(
