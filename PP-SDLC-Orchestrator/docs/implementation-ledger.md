@@ -3,6 +3,93 @@
 Living record of what's done, tested, deferred, and blocked. Update this every session — do not let it
 go stale.
 
+## Session 7 — 2026-08-11
+
+Continues session 6's LLM rollout to the second agent, UX Design. This session also fixes a real
+architecture gap found while doing it: no agent's output ever actually read the *previous* phase's
+approved content — Analysis worked, but every downstream agent would have kept re-deriving from the raw
+original task request forever, never actually building on what the upstream agent decided.
+
+### Completed
+
+- **Upstream artefact content plumbing** — the real fix, benefiting every future LLM adapter, not just
+  UX Design: `AgentRunRequest` gained `upstream_artefacts_text: dict[str, str]` (artefact_type → extracted
+  text); `OrchestratorService._gather_upstream_artefacts_text()` queries every BASELINE artefact version
+  for the project and extracts its text via a new `app/adapters/document_text.py::extract_text()` helper
+  (docx paragraphs for now; falls back to raw read for other formats), skipping unreadable files with a
+  warning rather than failing the run. Populated automatically in `start_run` — no adapter changes needed
+  to receive it, they just opt in by reading the dict key they care about.
+- **`UxDesignLlmAdapter`** (`llm_agent_adapter.py`): reads `upstream_artefacts_text["requirement_specification"]`
+  and includes it as real context in the prompt, so personas/journeys/screens are grounded in what
+  Analysis actually decided. Produces both UX artefacts (spec docx + prototype html) from one model call.
+- Extracted `UxDesignMockAdapter`'s rendering into a shared `app/adapters/ux_design_renderer.py`
+  (`render_spec`/`render_prototype`), mirroring the pattern already used for Analysis — mock and LLM
+  adapters differ only in content source, never in template-filling code.
+- **`03_Agent_Skills/ux_design/manifest.yaml` now declares `runtime: llm`** — the second real agent.
+  `SKILL.md` updated the same way as Analysis's (accurate real system prompt, outdated mock-runtime
+  reference replaced with an "Implementation note").
+- Generalized the ID-prefix-stripping regex from session 6 (`_LEADING_ID_PREFIX_RE`): it only matched
+  `REQ-`-style prefixes, which would have needed revisiting for every new agent's own ID scheme (`SCR-`,
+  `ADR-`, `DATA-`, `DEF-`, `TC-`, ...). Now matches any 2-6 letter prefix + digits, generically, once.
+- Extended `FakeModelProvider`'s default canned response to be a superset covering every LLM adapter's
+  schema so far (Analysis's `scope`/`functional_requirements`/`assumptions` *and* UX Design's
+  `personas`/`journeys`/`screens`/...) — each adapter reads only the keys it needs. This is the pattern
+  for every future agent added to the rollout: extend the one shared default, don't add per-agent
+  detection logic to the fake.
+
+### Bugs found via testing (unit tests this time, not just manual) and fixed
+
+1. **ID-prefix regex was REQ-specific.** The very first UX Design unit test
+   (`test_strips_model_supplied_screen_id_prefix`) failed with `"SCR-001: SCR-1: Dashboard"` — doubled,
+   exactly the session-6 bug, just with a prefix the old regex didn't know about. Generalized the regex
+   (see above) instead of adding a second SCR-specific one, since every future agent will have its own
+   prefix.
+2. **Global fake-provider stub broke every chain test past UX Design** the moment the manifest switched
+   to `runtime: llm` — the stub always returned Analysis-shaped JSON, and `UxDesignLlmAdapter` correctly
+   rejected it for missing `personas`/`journeys`/`screens`. Fixed by making the fake response a superset
+   rather than teaching the fixture which agent is asking.
+
+### Tests executed (all passing — 331 backend tests, 10 new)
+
+- `test_ux_design_llm_adapter.py` (8 cases: real rendering, upstream-context inclusion, graceful
+  omission when no upstream text exists yet, prefix-stripping regression, 3 missing-required-field cases,
+  malformed JSON).
+- `test_upstream_artefact_context.py` (2 cases): proves a real chain (Analysis approved → UX Design
+  started) actually receives the approved Requirement Specification's extracted text — checks for
+  `"REQ-001"` and the real project name inside it, not just that the dict is non-empty; and proves the
+  first phase (Analysis) correctly receives an empty dict since nothing is upstream of it yet.
+- Full suite run three times at key points (before the manifest switch: 323 passed; immediately after:
+  caught the fake-provider schema mismatch; after the fix: 331 passed) — the same discipline as session 6.
+- **Manual, with the real OpenRouter key**: a full two-phase real chain (pet adoption marketplace) —
+  Analysis approved, then UX Design run and inspected. Personas were concrete and specific ("Sarah Chen -
+  Shelter Manager", "Marcus Johnson - First-time adopter"), and all 6 screens and both journeys
+  explicitly referenced details only present in the approved Requirement Specification (meet-and-greet
+  scheduling, health records, shelter dashboard) — direct proof the upstream-context plumbing works, not
+  just that two independent LLM calls each produced plausible output.
+
+### Assumptions
+
+- `document_text.extract_text()` only really handles `.docx` properly (paragraph text via python-docx);
+  everything else falls back to a raw text read. Fine for now since Analysis's only output (docx) is the
+  only thing anything reads upstream of yet — will need real HTML/XLSX-aware extraction once an agent
+  downstream of UX Design's prototype or Test's workbook needs to read *those* as upstream context.
+- Upstream context is truncated to 8000 characters per artefact (`extract_text(..., max_chars=8000)`) —
+  arbitrary but reasonable given typical mock-scale documents; untested against a genuinely long
+  real-world requirement specification that might exceed it.
+
+### Repo / branch state
+
+Work done on `feature/ux-design-llm-adapter`, branched from `main` after session 6's PR (#12) merged.
+Not yet pushed or PR'd.
+
+### Remaining backlog (updated)
+
+Analysis and UX Design run `runtime: llm`; Technical Design, Data & Integration, Governance & Security,
+Build, Validation/QA, Test, Deploy, Hypercare & Closure still run `runtime: mock`. The pattern is now
+proven twice (including the harder multi-artefact + upstream-context case) — extending to Technical
+Design next would exercise reading UX Design's *two* artefacts (spec + prototype) as upstream context,
+the next incremental piece of complexity.
+
 ## Session 6 — 2026-08-05
 
 The user flagged that every agent's output was "just basic templates, nothing in them" — correct: every

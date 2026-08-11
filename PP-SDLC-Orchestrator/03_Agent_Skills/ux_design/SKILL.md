@@ -29,5 +29,16 @@ and the Data & Integration Agent respectively.
   underlying screen is unchanged.
 - Every screen in the inventory should have a corresponding entry in the interactive prototype's
   navigation — don't let the two artefacts drift apart.
-- This agent's `runtime: mock` (see `manifest.yaml`) fills both templates deterministically without a
-  live model — see `backend/app/adapters/mock_agent_adapter.py::UxDesignMockAdapter`.
+- Ground every persona, journey, and screen in the actual approved Requirement Specification provided to
+  you — do not invent scope that isn't supported by it.
+- Personas must be concrete (a name and a short description of their role and goals), not generic
+  placeholders.
+
+## Implementation note
+
+This file is used as the real system prompt when `runtime: llm` is set in `manifest.yaml` (see
+`backend/app/adapters/llm_agent_adapter.py::UxDesignLlmAdapter`) — every instruction above is sent
+directly to the model, along with the approved Requirement Specification's actual text. A `runtime: mock`
+fallback also exists (`backend/app/adapters/mock_agent_adapter.py::UxDesignMockAdapter`) for
+deterministic, network-free testing; both return the identical `AgentRunResult` envelope described in
+`03_Agent_Skills/AGENT_CONTRACT.md`.
