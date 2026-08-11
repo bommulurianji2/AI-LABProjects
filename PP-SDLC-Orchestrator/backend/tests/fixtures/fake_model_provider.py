@@ -76,6 +76,19 @@ def _default_response() -> dict:
         "connectors": ["Office 365 Outlook connector for calendar invitations."],
         "data_migration": "No legacy data migration is required for the initial release.",
         "reporting_model": "Power BI reporting is deferred until reporting requirements are confirmed.",
+        # Governance & Security
+        "identity_design": "Microsoft Entra ID as the identity provider; delegated permissions by default.",
+        "permissions": "Least privilege: delegated Graph permissions unless justified otherwise.",
+        "environment_strategy": "Separate dev, test, and production Power Platform environments.",
+        "dlp": [
+            "Business data group: Dataverse, SharePoint, Microsoft Teams.",
+            "Non-business data group: all other connectors, blocked by default.",
+        ],
+        "connector_governance": "Every connector introduced upstream requires an explicit DLP classification.",
+        "licensing": ["Microsoft 365 E3 or E5 licenses required for all end users."],
+        "compliance": "No regulated data categories identified for this fake-provider test run.",
+        "operational_ownership": "Platform Administrator owns environment health; Project Owner owns escalation.",
+        "audit_requirements": "All approval and rework events are captured in the audit log.",
     }
 
 

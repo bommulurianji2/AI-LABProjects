@@ -13,6 +13,7 @@ import re
 from app.adapters import (
     common,
     data_integration_renderer,
+    governance_security_renderer,
     requirement_specification_renderer,
     technical_design_renderer,
     ux_design_renderer,
@@ -500,4 +501,99 @@ class DataIntegrationLlmAdapter:
             f"Produce between {self.MIN_ENTITIES} and {self.MAX_ENTITIES} Dataverse entities and at least "
             "one relationship between them. Do not add your own numbering or IDs to entity names — the "
             "calling system assigns stable IDs itself."
+        )
+
+
+class GovernanceSecurityLlmAdapter:
+    """Real LLM-backed runtime for the Governance & Security Agent.
+
+    Reads the upstream Data Design Document's actual text (see
+    OrchestratorService._gather_upstream_artefacts_text) so DLP
+    classification and connector governance cover the connectors Data &
+    Integration actually chose, not a generic list.
+    """
+
+    SKILL_RELATIVE_PATH = "03_Agent_Skills/governance_security/SKILL.md"
+
+    def __init__(self, provider: ModelProvider | None = None):
+        self._provider = provider
+
+    def execute(self, request: AgentRunRequest) -> AgentRunResult:
+        provider = self._provider or model_provider_factory.get_model_provider()
+        settings = get_settings()
+        project_name = request.constraints.get("project_name", request.project_id)
+
+        system_prompt = (REPO_ROOT / self.SKILL_RELATIVE_PATH).read_text(encoding="utf-8")
+        data_design_text = request.upstream_artefacts_text.get("data_design_document", "")
+        user_prompt = self._build_user_prompt(
+            project_name=str(project_name),
+            task_request=request.task_request,
+            data_design_text=data_design_text,
+        )
+
+        raw_response = provider.complete(system=system_prompt, user=user_prompt)
+        parsed = _extract_json(raw_response)
+
+        dlp_lines = [str(d).strip() for d in parsed.get("dlp", []) if str(d).strip()]
+        licensing_lines = [str(lic).strip() for lic in parsed.get("licensing", []) if str(lic).strip()]
+
+        if not dlp_lines or not licensing_lines:
+            raise ModelProviderError(f"Model response missing required dlp or licensing lines: {parsed!r}"[:500])
+
+        version_label = common.version_label(request.run_number)
+        output_dir = settings.generated_artefacts_dir / request.project_id
+
+        def text_field(key: str) -> str:
+            return str(parsed.get(key, "")).strip() or f"{key.replace('_', ' ').title()} not specified by the model."
+
+        produced = governance_security_renderer.render(
+            repo_root=REPO_ROOT,
+            output_dir=output_dir,
+            project_name=str(project_name),
+            version_label=version_label,
+            identity_design_text=text_field("identity_design"),
+            permissions_text=text_field("permissions"),
+            environment_strategy_text=text_field("environment_strategy"),
+            dlp_lines=dlp_lines,
+            connector_governance_text=text_field("connector_governance"),
+            licensing_lines=licensing_lines,
+            compliance_text=text_field("compliance"),
+            operational_ownership_text=text_field("operational_ownership"),
+            audit_requirements_text=text_field("audit_requirements"),
+        )
+
+        return AgentRunResult(
+            execution_summary=f"Generated {governance_security_renderer.ARTEFACT_TYPE} from LLM-generated governance content.",
+            artefacts_produced=[produced],
+            review_status="ready_for_review",
+            execution_metrics={"dlp_line_count": len(dlp_lines)},
+        )
+
+    def _build_user_prompt(self, *, project_name: str, task_request: str, data_design_text: str) -> str:
+        context_section = (
+            f'Approved Data Design Document for this project:\n"""\n{data_design_text}\n"""\n\n'
+            if data_design_text
+            else ""
+        )
+        return (
+            f"Project name: {project_name}\n\n"
+            f"Original high-level requirement from the user:\n\"\"\"\n{task_request}\n\"\"\"\n\n"
+            f"{context_section}"
+            "Produce the governance design for this project, grounded in the Data Design Document above — "
+            "in particular, give every connector it mentions an explicit DLP classification. "
+            "Respond with ONLY a JSON object (no markdown code fences, no commentary before or after) "
+            "with exactly these keys:\n"
+            "{\n"
+            '  "identity_design": "<1-2 sentences on the identity provider and auth approach>",\n'
+            '  "permissions": "<1-2 sentences on least-privilege permission design>",\n'
+            '  "environment_strategy": "<1-2 sentences on dev/test/prod environment strategy>",\n'
+            '  "dlp": ["<DLP classification line 1>", "..."],\n'
+            '  "connector_governance": "<1-2 sentences on how upstream connectors are governed>",\n'
+            '  "licensing": ["<licensing consideration 1>", "..."],\n'
+            '  "compliance": "<1-2 sentences on regulated data categories, or state none apply>",\n'
+            '  "operational_ownership": "<1-2 sentences on who owns operations and escalation>",\n'
+            '  "audit_requirements": "<1-2 sentences on what must be audited and retained>"\n'
+            "}\n\n"
+            "Produce at least one DLP classification line per connector mentioned in the Data Design "
+            "Document, and at least one licensing consideration."
         )
