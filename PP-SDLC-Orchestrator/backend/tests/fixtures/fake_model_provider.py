@@ -121,6 +121,15 @@ def _default_response() -> dict:
             },
         ],
         "defects": [],
+        # Deploy
+        "defects_clear": True,
+        "open_defect_summary": "",
+        "deployment_configuration": "Solution deployed via Power Platform CLI import into the target environment.",
+        "pre_deployment_verification": (
+            "Verified: the Test Workbook's Defects sheet shows zero open defects for this version."
+        ),
+        "rollback_plan": "Prior solution version remains installed and can be re-activated.",
+        "deployment_evidence": "Deployment evidence is attached per the organization's retention policy.",
     }
 
 
