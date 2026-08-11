@@ -42,6 +42,30 @@ def _default_response() -> dict:
         "navigation": "Top-level tabs for Dashboard, Requests, and Approvals.",
         "responsive_behavior": "Layouts collapse to a single column below 768px.",
         "accessibility": "All interactive elements are keyboard-reachable with WCAG AA contrast.",
+        # Technical Design
+        "options": [
+            {"name": "Model-driven app on Dataverse", "tradeoff": "Faster to build, less UI flexibility."},
+            {"name": "Canvas app on Dataverse", "tradeoff": "Full UI control, more build effort."},
+        ],
+        "architecture_decisions": [
+            "Use Dataverse as the system of record for all request data.",
+            "Use Power Automate for all cross-entity workflow orchestration.",
+            "Expose external system access only through custom connectors.",
+        ],
+        "risks": ["Dataverse API limits may throttle bulk operations during peak submission periods."],
+        "limitations": ["Offline mobile support is out of scope for the initial release."],
+        "dependencies": ["Requires a Dataverse environment provisioned before the Build phase starts."],
+        "logical_architecture": (
+            "Power Platform canvas/model-driven app frontend, Dataverse as the system of record, "
+            "Power Automate for workflow orchestration."
+        ),
+        "integration_overview": (
+            "External systems are integrated via dedicated custom connectors; no direct HTTP calls "
+            "from flows to third-party APIs."
+        ),
+        "infrastructure_overview": (
+            "Dev/test/prod Power Platform environments with solution-based ALM."
+        ),
     }
 
 

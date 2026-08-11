@@ -10,7 +10,7 @@ import hashlib
 import json
 import re
 
-from app.adapters import common, requirement_specification_renderer, ux_design_renderer
+from app.adapters import common, requirement_specification_renderer, technical_design_renderer, ux_design_renderer
 from app.adapters.model_providers import factory as model_provider_factory
 from app.adapters.model_providers.base import ModelProvider, ModelProviderError
 from app.agents_registry.contract import AgentRunRequest, AgentRunResult, ProducedArtefact
@@ -249,4 +249,137 @@ class UxDesignLlmAdapter:
             f"Produce at least 2 personas, at least 2 journeys, and between {self.MIN_SCREENS} and "
             f"{self.MAX_SCREENS} screens. Do not add your own numbering or IDs to screen names — the "
             "calling system assigns stable IDs itself."
+        )
+
+
+class TechnicalDesignLlmAdapter:
+    """Real LLM-backed runtime for the Technical Design Agent.
+
+    Reads the upstream UX Design Specification's actual text (see
+    OrchestratorService._gather_upstream_artefacts_text) so the option
+    analysis, architecture decisions, and logical architecture are grounded
+    in what UX Design actually decided, not just the original task request.
+    """
+
+    SKILL_RELATIVE_PATH = "03_Agent_Skills/technical_design/SKILL.md"
+    MIN_OPTIONS = 2
+    MIN_DECISIONS = 3
+    MAX_DECISIONS = 6
+
+    def __init__(self, provider: ModelProvider | None = None):
+        self._provider = provider
+
+    def execute(self, request: AgentRunRequest) -> AgentRunResult:
+        provider = self._provider or model_provider_factory.get_model_provider()
+        settings = get_settings()
+        project_name = request.constraints.get("project_name", request.project_id)
+
+        system_prompt = (REPO_ROOT / self.SKILL_RELATIVE_PATH).read_text(encoding="utf-8")
+        ux_design_spec_text = request.upstream_artefacts_text.get("ux_design_specification", "")
+        user_prompt = self._build_user_prompt(
+            project_name=str(project_name),
+            task_request=request.task_request,
+            ux_design_spec_text=ux_design_spec_text,
+        )
+
+        raw_response = provider.complete(system=system_prompt, user=user_prompt)
+        parsed = _extract_json(raw_response)
+
+        raw_options = parsed.get("options", [])
+        options: list[tuple[str, str]] = []
+        for entry in raw_options:
+            if not isinstance(entry, dict):
+                continue
+            name = _strip_leading_id_prefix(str(entry.get("name", ""))).strip()
+            tradeoff = str(entry.get("tradeoff", "")).strip()
+            if name and tradeoff:
+                options.append((name, tradeoff))
+
+        decisions = [
+            _strip_leading_id_prefix(str(d)) for d in parsed.get("architecture_decisions", []) if str(d).strip()
+        ]
+        decisions = [d for d in decisions if d]
+        risks = [str(r).strip() for r in parsed.get("risks", []) if str(r).strip()]
+        limitations = [str(limit).strip() for limit in parsed.get("limitations", []) if str(limit).strip()]
+        dependencies = [str(dep).strip() for dep in parsed.get("dependencies", []) if str(dep).strip()]
+
+        if len(options) < self.MIN_OPTIONS or not decisions:
+            raise ModelProviderError(
+                f"Model response missing required options or architecture_decisions: {parsed!r}"[:500]
+            )
+
+        decision_entities = [f"ADR-{i + 1:03d}" for i in range(len(decisions))]
+        version_label = common.version_label(request.run_number)
+        output_dir = settings.generated_artefacts_dir / request.project_id
+
+        logical_architecture_text = str(parsed.get("logical_architecture", "")).strip() or (
+            "Logical architecture not specified by the model."
+        )
+        integration_overview_text = str(parsed.get("integration_overview", "")).strip() or (
+            "Integration overview not specified by the model."
+        )
+        infrastructure_overview_text = str(parsed.get("infrastructure_overview", "")).strip() or (
+            "Infrastructure overview not specified by the model."
+        )
+
+        solution_approach_produced = technical_design_renderer.render_solution_approach(
+            repo_root=REPO_ROOT,
+            output_dir=output_dir,
+            project_name=str(project_name),
+            version_label=version_label,
+            options=options,
+            decisions=decisions,
+            decision_entities=decision_entities,
+            risks=risks or ["No risks identified by the model."],
+            limitations=limitations or ["No limitations identified by the model."],
+            dependencies=dependencies or ["No dependencies identified by the model."],
+        )
+        architecture_handbook_produced = technical_design_renderer.render_architecture_handbook(
+            repo_root=REPO_ROOT,
+            output_dir=output_dir,
+            project_name=str(project_name),
+            version_label=version_label,
+            logical_architecture_text=logical_architecture_text,
+            integration_overview_text=integration_overview_text,
+            infrastructure_overview_text=infrastructure_overview_text,
+        )
+
+        return AgentRunResult(
+            execution_summary=(
+                f"Generated {technical_design_renderer.SOLUTION_APPROACH_ARTEFACT_TYPE} and "
+                f"{technical_design_renderer.ARCHITECTURE_HANDBOOK_ARTEFACT_TYPE} with "
+                f"{len(decisions)} LLM-generated architecture decisions."
+            ),
+            artefacts_produced=[solution_approach_produced, architecture_handbook_produced],
+            review_status="ready_for_review",
+            execution_metrics={"decision_count": len(decisions), "option_count": len(options)},
+        )
+
+    def _build_user_prompt(self, *, project_name: str, task_request: str, ux_design_spec_text: str) -> str:
+        context_section = (
+            f'Approved UX Design Specification for this project:\n"""\n{ux_design_spec_text}\n"""\n\n'
+            if ux_design_spec_text
+            else ""
+        )
+        return (
+            f"Project name: {project_name}\n\n"
+            f"Original high-level requirement from the user:\n\"\"\"\n{task_request}\n\"\"\"\n\n"
+            f"{context_section}"
+            "Produce the technical design for this project, grounded in the UX Design Specification above. "
+            "Respond with ONLY a JSON object (no markdown code fences, no commentary before or after) "
+            "with exactly these keys:\n"
+            "{\n"
+            '  "options": [{"name": "<option name>", "tradeoff": "<what you give up / gain>"}, "..."],\n'
+            '  "architecture_decisions": ["<decision 1>", "..."],\n'
+            '  "risks": ["<risk 1>", "..."],\n'
+            '  "limitations": ["<limitation 1>", "..."],\n'
+            '  "dependencies": ["<dependency 1>", "..."],\n'
+            '  "logical_architecture": "<2-3 sentences describing the logical architecture>",\n'
+            '  "integration_overview": "<1-2 sentences on how external systems are integrated>",\n'
+            '  "infrastructure_overview": "<1-2 sentences on environments and infrastructure>"\n'
+            "}\n\n"
+            f"Produce at least {self.MIN_OPTIONS} architecture options (the first one listed is treated as "
+            f"the recommendation) and between {self.MIN_DECISIONS} and {self.MAX_DECISIONS} architecture "
+            "decisions. Do not add your own numbering or IDs to option names or decisions — the calling "
+            "system assigns stable IDs itself."
         )
