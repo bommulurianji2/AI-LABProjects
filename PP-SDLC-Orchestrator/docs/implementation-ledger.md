@@ -3,6 +3,63 @@
 Living record of what's done, tested, deferred, and blocked. Update this every session — do not let it
 go stale.
 
+## Session 15 — 2026-08-11
+
+Completes the LLM rollout: the eleventh and final agent, Hypercare & Closure, is now `runtime: llm`.
+Every specialist agent in PP-SDLC-Orchestrator now produces real, grounded, model-generated content —
+the mock runtime remains only as the deterministic, network-free path used by the test suite.
+
+### Completed
+
+- Extracted `HypercareClosureMockAdapter`'s rendering into a shared `app/adapters/hypercare_closure_renderer.py`
+  (single `render()` function, no stable-ID entities — same shape as Governance & Security and Deploy).
+- **`HypercareClosureLlmAdapter`** (`llm_agent_adapter.py`): reads all eleven prior artefact types via
+  `_format_multi_artefact_context`, in particular the IQ Document's pre-deployment verification (which
+  already carries the Test Workbook's defect status forward from Deploy). Unlike Deploy, this agent does
+  not re-gate on defects — Deploy already refused to proceed if any were open — its guardrail is narrower:
+  never produce an empty closure statement. The adapter raises `ModelProviderError` if the model omits
+  one, exactly the "never close silently without that check" failure mode the guardrail exists to prevent.
+- **`03_Agent_Skills/hypercare_closure/manifest.yaml` now declares `runtime: llm`** — the eleventh and
+  final agent. `SKILL.md` updated with the standard "Implementation note" pattern.
+- Extended `FakeModelProvider`'s default response with Hypercare & Closure's schema keys.
+
+### Tests executed (all passing — 389 backend tests, 6 new)
+
+- `test_hypercare_closure_llm_adapter.py` (6 cases): real rendering from model content, upstream IQ
+  Document context actually included in the prompt, graceful omission when no upstream text exists, an
+  empty closure statement raises, a missing free-text field falls back gracefully, malformed JSON raises.
+
+### Manual verification with the real OpenRouter key
+
+Attempted a full ten-phase chain (Analysis → ... → Deploy → Hypercare & Closure) for a fictitious "Office
+Supply Request Tracker" project; Deploy correctly blocked again on two real, legitimate defects found by
+Test (a Dataverse naming-convention risk and a UX/data mismatch on a filter control) — the same guardrail
+verified in session 14 holding again, on a different project. Since reaching Hypercare & Closure through
+the full chain requires the real Test Agent to report zero defects (not something to force), verified
+`HypercareClosureLlmAdapter` directly against the real provider instead, with a synthetic-but-realistic
+IQ Document/Governance Document context describing a clean deployment. The generated closure report's
+closure statement quoted the IQ Document's exact section and defect-free wording ("Section 3
+Pre-Deployment Verification... zero open defects... all 5 test cases TC-001 through TC-005 passed"),
+referenced the Governance Document's ownership section by name, and produced a coherent, non-templated
+hypercare narrative (specific dates, a plausible minor issue, a documented resolution) — confirming
+genuine grounding for the final agent in the rollout.
+
+### Rollout complete
+
+All 11 agents (Orchestrator's specialist roster: Analysis, UX Design, Technical Design, Data &
+Integration, Governance & Security, Build, Validation/QA, Test, Deploy, Hypercare & Closure — the
+Orchestrator itself is a domain service, not a manifest-registered agent) are now `runtime: llm`. The
+`runtime: mock` adapters and their shared renderers remain in place — every real adapter still routes
+through the same renderer module its mock counterpart uses — so the full backend test suite stays
+deterministic and network-free, and any agent can be reverted to `runtime: mock` with a one-line manifest
+edit if needed.
+
+### Deferred / next
+
+- No agents remain on `runtime: mock`. Next-session backlog candidates: Azure deployment, M365
+  Graph/SharePoint/Power Platform adapters, Entra ID auth, Playwright E2E suite — all previously deferred
+  and tracked, none blocking current functionality.
+
 ## Session 14 — 2026-08-11
 
 Continues the LLM rollout to the ninth agent, Deploy — the first agent whose guardrail is a genuine hard
