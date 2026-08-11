@@ -3,6 +3,49 @@
 Living record of what's done, tested, deferred, and blocked. Update this every session — do not let it
 go stale.
 
+## Session 12 — 2026-08-11
+
+Continues the LLM rollout to the seventh agent, Validation/QA — reuses the multi-artefact context
+pattern introduced for Build in session 11, extended one step further (also reading Build's own two
+output artefacts) and adding a stricter guardrail: every finding needs a named remediation owner, not
+just an upstream reference.
+
+### Completed
+
+- Extracted `ValidationQaMockAdapter`'s rendering into a shared `app/adapters/validation_qa_renderer.py`
+  (single `render()` function — this agent produces one artefact with no stable-ID entities of its own,
+  same shape as Governance & Security).
+- **`ValidationQaLlmAdapter`** (`llm_agent_adapter.py`): reads all eight prior artefact types (everything
+  through Build's Build Review Report and Final Code Review Report) via `_format_multi_artefact_context`.
+  Each finding requires both a description and a `remediation_owner`; findings missing an owner are
+  dropped rather than rendered with a blank, and if *no* finding survives that filter the adapter raises
+  `ModelProviderError` — matches the guardrail that this agent never fixes content directly, so a finding
+  with nowhere to route is not useful output.
+- **`03_Agent_Skills/validation_qa/manifest.yaml` now declares `runtime: llm`** — the seventh real agent.
+  `SKILL.md` updated with the same grounding guardrail and multi-artefact "Implementation note".
+- Extended `FakeModelProvider`'s shared `findings` fixture (used by both Build and Validation/QA) with a
+  `remediation_owner` field — harmless extra key for Build's schema, required for Validation/QA's.
+
+### Tests executed (all passing — 365 backend tests, 7 new)
+
+- `test_validation_qa_llm_adapter.py` (7 cases): real rendering from model content, multiple upstream
+  artefacts actually present in the prompt together, graceful omission when no upstream text exists,
+  missing-findings raises, a finding without a remediation owner is silently dropped while others
+  survive, *all* findings lacking an owner raises, malformed JSON raises.
+
+### Manual verification with the real OpenRouter key
+
+Ran a full seven-phase chain (Analysis → UX Design → Technical Design → Data & Integration → Governance
+& Security → Build → Validation/QA) for a fictitious "Neighborhood Tool Library" project. The generated
+Validation Report's five findings each cited real IDs spanning nearly every prior phase in the same run
+(`REQ-003`, `ADR-003`, `SCR-001`, `DEF-003`, `ADR-002`) with specific, plausible traceability gaps (e.g.
+an accessibility claim in the UX spec with no corresponding schema field to store the data) and named a
+concrete remediation owner for each — confirms the pattern holds at eight upstream artefacts deep.
+
+### Deferred / next
+
+- Remaining agents still on `runtime: mock`: Test, Deploy, Hypercare & Closure.
+
 ## Session 11 — 2026-08-11
 
 Continues the LLM rollout to the sixth agent, Build — the first agent whose guardrail explicitly

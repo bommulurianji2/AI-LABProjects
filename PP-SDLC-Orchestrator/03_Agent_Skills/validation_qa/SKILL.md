@@ -24,5 +24,16 @@ rework recommendations, not silently patched by this agent.
   `ADR-001`).
 - An overall verdict of "pass with findings" still requires each finding to have a proposed remediation
   owner (the agent/phase that should address it), even though this agent doesn't fix it directly.
-- This agent's `runtime: mock` (see `manifest.yaml`) fills the template deterministically without a live
-  model — see `backend/app/adapters/mock_agent_adapter.py::ValidationQaMockAdapter`.
+- Ground findings in the actual approved upstream artefacts provided to you, across every prior phase —
+  don't invent findings unrelated to anything upstream actually specified.
+
+## Implementation note
+
+This file is used as the real system prompt when `runtime: llm` is set in `manifest.yaml` (see
+`backend/app/adapters/llm_agent_adapter.py::ValidationQaLlmAdapter`) — every instruction above is sent
+directly to the model, along with every upstream artefact's actual text (not just the Final Code Review
+Report named above as the formal manifest input), since findings need to reference IDs from any earlier
+phase. A `runtime: mock` fallback also exists
+(`backend/app/adapters/mock_agent_adapter.py::ValidationQaMockAdapter`) for deterministic, network-free
+testing; both return the identical `AgentRunResult` envelope described in
+`03_Agent_Skills/AGENT_CONTRACT.md`.
