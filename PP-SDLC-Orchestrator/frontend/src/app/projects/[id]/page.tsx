@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { formatLabel } from "@/lib/format";
-import type { ArtefactVersion, Project, ReviewDecision, Run, User } from "@/lib/types";
+import type { ArtefactVersion, Project, ReviewDecision, Run, RunHistoryEntry, User } from "@/lib/types";
 
 const LAST_REVIEWER_STORAGE_KEY = "pp-sdlc-last-reviewer-id";
 
@@ -16,6 +16,8 @@ const DECISIONS: { value: ReviewDecision; label: string }[] = [
   { value: "rejected", label: "Reject" },
 ];
 
+const RESUMABLE_RUN_STATES = new Set(["waiting_for_human_review", "in_review"]);
+
 export default function ProjectWorkspacePage() {
   const params = useParams<{ id: string }>();
   const projectId = params.id;
@@ -24,6 +26,12 @@ export default function ProjectWorkspacePage() {
   const [run, setRun] = useState<Run | null>(null);
   const [artefactVersions, setArtefactVersions] = useState<ArtefactVersion[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [runHistory, setRunHistory] = useState<RunHistoryEntry[]>([]);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [expandedHistoryRunId, setExpandedHistoryRunId] = useState<string | null>(null);
+  const [expandedHistoryVersions, setExpandedHistoryVersions] = useState<ArtefactVersion[]>([]);
+  const [expandedHistoryLoading, setExpandedHistoryLoading] = useState(false);
 
   const [taskRequest, setTaskRequest] = useState("");
   const [startingRun, setStartingRun] = useState(false);
@@ -43,21 +51,38 @@ export default function ProjectWorkspacePage() {
   const [reviewError, setReviewError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Run/artefact state is intentionally kept in memory only for this
-    // session — there's no "list runs for a project" endpoint yet, so a
-    // page refresh loses track of an in-flight run. See implementation
-    // ledger.
-    //
     // The guard below prevents setState after this component unmounts (or
     // projectId changes again) before the fetch resolves. See
     // https://react.dev/learn/synchronizing-with-effects#fetching-data.
     let ignore = false;
     (async () => {
       try {
-        const data = await api.getProject(projectId);
-        if (!ignore) {
-          setProject(data);
-          setLoadError(null);
+        const [projectData, history] = await Promise.all([
+          api.getProject(projectId),
+          api.listProjectRuns(projectId),
+        ]);
+        if (ignore) return;
+        setProject(projectData);
+        setLoadError(null);
+        setRunHistory(history);
+        setHistoryError(null);
+
+        // Restore an in-flight review after a page refresh: find the most
+        // recent run for the project's current phase that's still waiting
+        // on a human, and rehydrate it as the active `run` the same way it
+        // would look if this page had never been reloaded.
+        const resumable = [...history]
+          .reverse()
+          .find((entry) => entry.phase === projectData.current_phase && RESUMABLE_RUN_STATES.has(entry.state));
+        if (resumable) {
+          const [resumedRun, versions] = await Promise.all([
+            api.getRun(resumable.id),
+            api.getRunArtefactVersions(resumable.id),
+          ]);
+          if (!ignore) {
+            setRun(resumedRun);
+            setArtefactVersions(versions);
+          }
         }
       } catch (err) {
         if (!ignore) {
@@ -99,6 +124,32 @@ export default function ProjectWorkspacePage() {
     };
   }, []);
 
+  async function refreshRunHistory() {
+    try {
+      setRunHistory(await api.listProjectRuns(projectId));
+      setHistoryError(null);
+    } catch (err) {
+      setHistoryError(err instanceof ApiError ? err.message : "Could not load run history.");
+    }
+  }
+
+  async function handleToggleHistoryRun(runId: string) {
+    if (expandedHistoryRunId === runId) {
+      setExpandedHistoryRunId(null);
+      setExpandedHistoryVersions([]);
+      return;
+    }
+    setExpandedHistoryRunId(runId);
+    setExpandedHistoryLoading(true);
+    try {
+      setExpandedHistoryVersions(await api.getRunArtefactVersions(runId));
+    } catch {
+      setExpandedHistoryVersions([]);
+    } finally {
+      setExpandedHistoryLoading(false);
+    }
+  }
+
   async function handleAddReviewer(e: React.FormEvent) {
     e.preventDefault();
     if (!newReviewerEmail.trim()) return;
@@ -131,6 +182,7 @@ export default function ProjectWorkspacePage() {
       setTaskRequest("");
       setArtefactVersions(await api.getRunArtefactVersions(startedRun.id));
       setProject(await api.getProject(projectId)); // phase_status just moved to awaiting_review
+      await refreshRunHistory();
     } catch (err) {
       setRunError(err instanceof ApiError ? err.message : "Could not start the run.");
     } finally {
@@ -155,6 +207,7 @@ export default function ProjectWorkspacePage() {
       setRun(await api.getRun(run.id));
       setArtefactVersions(await api.getRunArtefactVersions(run.id)); // may have just been promoted to baseline
       setComments("");
+      await refreshRunHistory();
     } catch (err) {
       setReviewError(err instanceof ApiError ? err.message : "Could not submit the review.");
     } finally {
@@ -180,16 +233,12 @@ export default function ProjectWorkspacePage() {
   }
 
   // Mirrors the backend's own guard in OrchestratorService.start_run — a
-  // run can only start when the phase is actually pending/rework, not
-  // merely "we have no local run object" (which is also true right after
-  // a page refresh mid-review, since there's no "list runs" endpoint yet
-  // to rediscover an in-flight run).
+  // run can only start when the phase is actually pending/rework.
   const canStartRun =
     project.status !== "completed" &&
     (project.phase_status === "pending" || project.phase_status === "rework") &&
     (!run || run.state === "completed");
   const awaitingReview = run?.state === "waiting_for_human_review";
-  const awaitingReviewWithoutLocalRunState = project.phase_status === "awaiting_review" && !awaitingReview;
 
   return (
     <main className="page stack">
@@ -212,16 +261,6 @@ export default function ProjectWorkspacePage() {
       {project.status === "completed" && (
         <section className="card">
           <p>This project has completed its full lifecycle.</p>
-        </section>
-      )}
-
-      {awaitingReviewWithoutLocalRunState && (
-        <section className="card">
-          <p>
-            This phase has a run awaiting review, but its details aren&apos;t available in this browser
-            session (there&apos;s no run-history endpoint yet — see the implementation ledger). Submit the
-            review from the session that started the run, or start a fresh run once that one is resolved.
-          </p>
         </section>
       )}
 
@@ -358,6 +397,53 @@ export default function ProjectWorkspacePage() {
           )}
         </section>
       )}
+
+      <section className="card">
+        <h3>Run history</h3>
+        {historyError && <p className="error">{historyError}</p>}
+        {runHistory.length === 0 ? (
+          <p className="muted">No runs yet for this project.</p>
+        ) : (
+          <ul className="stack" style={{ listStyle: "none", padding: 0 }}>
+            {runHistory.map((entry) => (
+              <li key={entry.id} style={{ borderTop: "1px solid var(--border)", paddingTop: "0.5rem" }}>
+                <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                  <span>
+                    {formatLabel(entry.phase)} (#{entry.run_number}) — <span className="badge">{formatLabel(entry.state)}</span>
+                    {entry.review_decision && (
+                      <>
+                        {" "}
+                        — <span className="badge">{formatLabel(entry.review_decision)}</span>
+                      </>
+                    )}
+                  </span>
+                  <button type="button" className="secondary" onClick={() => handleToggleHistoryRun(entry.id)}>
+                    {expandedHistoryRunId === entry.id ? "Hide" : "Details"}
+                  </button>
+                </div>
+                {expandedHistoryRunId === entry.id && (
+                  <div style={{ marginTop: "0.5rem" }}>
+                    {expandedHistoryLoading ? (
+                      <p className="muted">Loading…</p>
+                    ) : expandedHistoryVersions.length === 0 ? (
+                      <p className="muted">No artefacts produced by this run.</p>
+                    ) : (
+                      <ul style={{ listStyle: "none", padding: 0 }}>
+                        {expandedHistoryVersions.map((version) => (
+                          <li key={version.id}>
+                            {formatLabel(version.artefact_type)} — {version.version_label} (
+                            {formatLabel(version.status)}) — <a href={api.downloadUrlForVersion(version.id)}>Download</a>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </main>
   );
 }

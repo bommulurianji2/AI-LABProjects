@@ -46,3 +46,16 @@ export interface User {
   role: string;
   created_at: string;
 }
+
+export interface RunHistoryEntry {
+  id: string;
+  project_id: string;
+  agent_id: string;
+  phase: string;
+  run_number: number;
+  state: string;
+  started_at: string | null;
+  ended_at: string | null;
+  review_decision: string | null;
+  artefact_types: string[];
+}
