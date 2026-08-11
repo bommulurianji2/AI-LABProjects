@@ -17,6 +17,7 @@ from app.adapters import (
     governance_security_renderer,
     requirement_specification_renderer,
     technical_design_renderer,
+    test_renderer,
     ux_design_renderer,
     validation_qa_renderer,
 )
@@ -859,4 +860,130 @@ class ValidationQaLlmAdapter:
             "}\n\n"
             "Produce at least 1 and at most 5 findings, each citing a specific upstream ID and naming a "
             "remediation owner — you validate and report, you never fix content directly."
+        )
+
+
+class TestAgentLlmAdapter:
+    """Real LLM-backed runtime for the Test Agent.
+
+    Like Build and Validation/QA, reads every upstream artefact present
+    via _format_multi_artefact_context so test cases trace back to real
+    requirements/screens/decisions, not invented ones. Unlike those two,
+    a "Failed" test case is a legitimate, expected outcome (per this
+    agent's guardrail: a failing test against a correct requirement is a
+    defect, not a reason to loosen the requirement) — so this adapter
+    accepts a mix of Passed/Failed statuses rather than requiring all-pass.
+    """
+
+    # Tells pytest not to try collecting this as a test class — its name
+    # happens to start with "Test" (it's the Test Agent, not a test suite).
+    __test__ = False
+
+    SKILL_RELATIVE_PATH = "03_Agent_Skills/test/SKILL.md"
+    CONTEXT_ARTEFACT_TYPES = [
+        "requirement_specification",
+        "ux_design_specification",
+        "solution_approach",
+        "architecture_handbook",
+        "data_design_document",
+        "governance_document",
+        "build_review_report",
+        "final_code_review_report",
+        "validation_report",
+    ]
+    MIN_CASES = 2
+    MAX_CASES = 8
+
+    def __init__(self, provider: ModelProvider | None = None):
+        self._provider = provider
+
+    def execute(self, request: AgentRunRequest) -> AgentRunResult:
+        provider = self._provider or model_provider_factory.get_model_provider()
+        settings = get_settings()
+
+        system_prompt = (REPO_ROOT / self.SKILL_RELATIVE_PATH).read_text(encoding="utf-8")
+        upstream_context = _format_multi_artefact_context(request.upstream_artefacts_text, self.CONTEXT_ARTEFACT_TYPES)
+        user_prompt = self._build_user_prompt(task_request=request.task_request, upstream_context=upstream_context)
+
+        raw_response = provider.complete(system=system_prompt, user=user_prompt)
+        parsed = _extract_json(raw_response)
+
+        raw_cases = parsed.get("test_cases", [])
+        cases: list[tuple[str, str, str]] = []
+        statuses: list[str] = []
+        for entry in raw_cases:
+            if not isinstance(entry, dict):
+                continue
+            test_type = str(entry.get("type", "")).strip()
+            description = str(entry.get("description", "")).strip()
+            related_entity = _strip_leading_id_prefix(str(entry.get("related_entity", ""))).strip()
+            status = str(entry.get("status", "")).strip() or "Passed"
+            if test_type and description and related_entity:
+                cases.append((test_type, description, related_entity))
+                statuses.append(status)
+
+        if not cases:
+            raise ModelProviderError(
+                f"Model response contained no properly-traced test cases: {parsed!r}"[:500]
+            )
+
+        case_entities = [f"TC-{i + 1:03d}" for i in range(len(cases))]
+
+        raw_defects = parsed.get("defects", [])
+        defects: list[tuple[str, str, str, str]] = []
+        for i, entry in enumerate(raw_defects):
+            if not isinstance(entry, dict):
+                continue
+            related_test = str(entry.get("related_test", "")).strip()
+            description = str(entry.get("description", "")).strip()
+            status = str(entry.get("status", "")).strip() or "Open"
+            if related_test and description:
+                defects.append((f"DEF-{i + 1:03d}", related_test, description, status))
+
+        version_label = common.version_label(request.run_number)
+        output_dir = settings.generated_artefacts_dir / request.project_id
+
+        produced = test_renderer.render(
+            repo_root=REPO_ROOT,
+            output_dir=output_dir,
+            version_label=version_label,
+            cases=cases,
+            case_entities=case_entities,
+            case_statuses=statuses,
+            defects=defects,
+        )
+
+        return AgentRunResult(
+            execution_summary=(
+                f"Generated {test_renderer.ARTEFACT_TYPE} with {len(cases)} LLM-generated test cases "
+                f"and {len(defects)} defects."
+            ),
+            artefacts_produced=[produced],
+            review_status="ready_for_review",
+            execution_metrics={"case_count": len(cases), "defect_count": len(defects)},
+        )
+
+    def _build_user_prompt(self, *, task_request: str, upstream_context: str) -> str:
+        context_section = f"{upstream_context}\n\n" if upstream_context else ""
+        return (
+            f"Original high-level requirement from the user:\n\"\"\"\n{task_request}\n\"\"\"\n\n"
+            f"{context_section}"
+            "Write OQ/SIT and PQ/UAT test cases for the approved artefacts above, execute them (in "
+            "principle, based on what the artefacts describe), and report results. "
+            "Respond with ONLY a JSON object (no markdown code fences, no commentary before or after) "
+            "with exactly these keys:\n"
+            "{\n"
+            '  "test_cases": [{"type": "<OQ|SIT|PQ|UAT>", "description": "<what the test verifies>", '
+            '"related_entity": "<upstream ID this test traces to, e.g. REQ-001 or SCR-004>", '
+            '"status": "<Passed|Failed>"}, "..."],\n'
+            '  "defects": [{"related_test": "<the TC-00N this defect was found by, use TC-001 for the '
+            'first test case listed above, TC-002 for the second, etc.>", "description": "<the defect>", '
+            '"status": "<Open>"}, "..."]\n'
+            "}\n\n"
+            f"Produce between {self.MIN_CASES} and {self.MAX_CASES} test cases, every one tracing to a "
+            "real upstream ID — never a test case with no traceability. If a test case's status is "
+            "\"Failed\", include a corresponding entry in \"defects\" referencing it — a failing test "
+            "against a correct requirement is a defect, never a reason to omit or loosen the test. Do not "
+            "add your own numbering or IDs — the calling system assigns each test case and defect its own "
+            "stable ID itself."
         )
