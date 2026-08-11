@@ -3,6 +3,63 @@
 Living record of what's done, tested, deferred, and blocked. Update this every session — do not let it
 go stale.
 
+## Session 9 — 2026-08-11
+
+Continues the LLM rollout to the fourth agent, Data & Integration, and catches a real process-hygiene
+bug during manual verification (not a code bug — a stale local server left over from the previous
+session's testing, listening on the same port and silently serving out-of-date behavior).
+
+### Completed
+
+- Extracted `DataIntegrationMockAdapter`'s rendering into a shared `app/adapters/data_integration_renderer.py`
+  (single `render()` function — this agent produces one artefact, unlike Technical Design's two).
+- **`DataIntegrationLlmAdapter`** (`llm_agent_adapter.py`): reads `upstream_artefacts_text["solution_approach"]`
+  so the Dataverse schema, relationships, external-source mapping, and connector design are grounded in
+  Technical Design's actual architecture decisions. Requires at least one entity, raising
+  `ModelProviderError` otherwise.
+- **`03_Agent_Skills/data_integration/manifest.yaml` now declares `runtime: llm`** — the fourth real
+  agent. `SKILL.md` updated with the same grounding guardrail and "Implementation note" pattern.
+- Extended `FakeModelProvider`'s default response with Data & Integration's schema keys (`entities`,
+  `relationships`, `external_sources`, `connectors`, `data_migration`, `reporting_model`).
+- Wrote a reusable manual-verification harness (`chain_runner.py`, kept in the session scratchpad, not
+  the repo — it's a dev tool, not application code) that drives a project through N phases against a
+  real running backend and prints the final phase's artefacts, so each subsequent agent's real-key
+  verification doesn't need a bespoke one-off script.
+
+### Bug found during manual verification (process hygiene, not application code)
+
+The first real-key verification run produced output that was suspiciously identical to the *mock*
+adapter's hardcoded pool content ("Request"/"RequestLine"/"Approval"/"Attachment" entities, the exact
+string "No legacy data migration in scope for this mock run.") even though the manifest correctly said
+`runtime: llm` on disk. Root cause: the previous session's Technical Design verification server was still
+running on port 8010 — `pkill -f "uvicorn app.main:app"` does not reliably kill Windows python.exe
+processes launched from Git Bash, so it silently no-op'd. The *new* server process failed to bind
+(`WinError 10048`, port already in use) and exited, but its error was easy to miss since it was
+backgrounded — so requests kept hitting the old, stale-registry process the whole time. Fixed by finding
+the actual PID via `Get-CimInstance Win32_Process` and killing it explicitly with
+`Stop-Process -Id <pid> -Force`, then re-verifying against a genuinely fresh process. Going forward,
+manual verification confirms the *current* server's PID before trusting its output, rather than trusting
+that a `pkill`/background-start sequence worked.
+
+### Tests executed (all passing — 345 backend tests, 6 new)
+
+- `test_data_integration_llm_adapter.py` (6 cases): real rendering from model content, upstream Solution
+  Approach context actually included in the prompt, graceful omission when no upstream text exists,
+  ID-prefix-stripping regression, missing-entities raises, malformed JSON raises.
+
+### Manual verification with the real OpenRouter key (after fixing the stale-server issue above)
+
+Ran a full four-phase chain (Analysis → UX Design → Technical Design → Data & Integration) for a
+fictitious "Volunteer Shift Scheduler" project. The generated Data Design Document named
+domain-specific entities (`Shift`, `Volunteer`, `ShiftRegistration`, `Administrator`) and explicitly
+cross-referenced real upstream IDs from the earlier phases in this same run (e.g. "per SCR-001", "per
+ADR-003", "per ADR-004") — confirms grounding survives three hops, not just one.
+
+### Deferred / next
+
+- Remaining agents still on `runtime: mock`: Governance & Security, Build, Validation/QA, Test, Deploy,
+  Hypercare & Closure.
+
 ## Session 8 — 2026-08-11
 
 Continues the LLM rollout to the third agent, Technical Design — the first agent after UX Design, so it
