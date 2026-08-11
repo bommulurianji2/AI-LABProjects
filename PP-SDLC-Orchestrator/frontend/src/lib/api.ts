@@ -1,4 +1,4 @@
-import type { AgentSummary, ArtefactVersion, Project, ReviewDecision, Run } from "./types";
+import type { AgentSummary, ArtefactVersion, Project, ReviewDecision, Run, User } from "./types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
@@ -59,4 +59,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ reviewer_id: reviewerId, decision, comments }),
     }),
+
+  listUsers: () => request<User[]>("/users"),
+
+  // Get-or-create by email — see backend/app/api/routes.py::create_user.
+  createUser: (email: string, role: string) =>
+    request<User>("/users", { method: "POST", body: JSON.stringify({ email, role }) }),
 };

@@ -39,3 +39,10 @@ export interface AgentSummary {
   phase: string | null;
   version: string;
 }
+
+export interface User {
+  id: string;
+  email: string;
+  role: string;
+  created_at: string;
+}
