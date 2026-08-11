@@ -31,9 +31,12 @@ def test_artefact_versions_endpoint_exposes_artefact_type_per_version(api_client
     analysis_run = api_client.post(
         f"/projects/{project['id']}/runs", json={"task_request": "Draft requirements"}
     ).json()
+    reviewer_id = api_client.post(
+        "/users", json={"email": "ux.reviewer@example.test", "role": "Reviewer"}
+    ).json()["id"]
     api_client.post(
         f"/runs/{analysis_run['id']}/review",
-        json={"reviewer_id": "ux.reviewer@example.test", "decision": "approved", "comments": []},
+        json={"reviewer_id": reviewer_id, "decision": "approved", "comments": []},
     )
 
     ux_run = api_client.post(

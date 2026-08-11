@@ -3,6 +3,69 @@
 Living record of what's done, tested, deferred, and blocked. Update this every session — do not let it
 go stale.
 
+## Session 16 — 2026-08-11
+
+Fixes a real gap found via manual browser smoke testing after the LLM rollout completed: with all 11
+agents now real, a local end-to-end walkthrough was run through the actual frontend for the first time
+this session, surfacing a governance hole that every prior test (unit, integration, and the many manual
+API-level chain runs) had missed because they all either created a `User` row directly via the DB session
+or, for the one HTTP-level test that didn't, happened to pass a string that was never checked.
+
+### The gap
+
+The review form's reviewer field has a placeholder of `reviewer@example.test`, implying an email, but the
+value is passed straight through as `reviewer_id` — a foreign key to `users.id`. There was no `/users`
+endpoint, no picker, and (this was the actual bug) no validation: SQLite doesn't enforce foreign keys by
+default, so `submit_review` silently accepted any string and recorded it as a `Review.reviewer_id`, which
+is supposed to be an auditable governance record, not free text. This would also have started throwing
+raw `IntegrityError`s instead of a clear domain error the moment the database moves to Postgres (which
+enforces FKs by default) — so it was a real blocker for the "real thing" test, not just a rough edge.
+
+### Completed
+
+- **`GET /users`** and **`POST /users`** (`app/api/routes.py`, schemas in `app/api/schemas.py`): `POST` is
+  get-or-create by email (idempotent — 201 on genuine creation, 200 returning the existing row on a repeat
+  email) since reviewers are picked from a short internal list here, not self-registered.
+- **`OrchestratorService.submit_review`** now looks up the reviewer by ID and raises `OrchestrationError`
+  (surfaced as HTTP 409) if no such `User` exists, checked before any state mutation so a bad reviewer_id
+  has no side effects.
+- Fixed two existing tests (`test_api_full_loop.py`, `test_multi_artefact_run_listing.py`) that were
+  passing a bogus reviewer_id with no corresponding `User` row — they only ever passed because of the
+  exact gap above.
+- **Frontend**: replaced the free-text reviewer input with a `<select>` populated from `GET /users`, plus
+  an inline "+ Add reviewer" form that calls `POST /users` and auto-selects the result. Persists the
+  last-used reviewer per browser in `localStorage` (pure UX convenience for repeated manual testing, not
+  an identity mechanism).
+
+### Tests executed (all passing — 397 backend tests, 8 new)
+
+- `test_users_api.py` (8 cases): create returns 201 and persists, default role, idempotent get-or-create
+  by email, list ordering, submit_review rejects an unknown reviewer_id (both at the HTTP layer and
+  directly against `OrchestratorService`), and the accepted path for both layers.
+- Frontend: `npx tsc --noEmit` clean, `npm run lint` clean.
+
+### Manual verification
+
+Ran a full local smoke test through the real frontend (backend on :8000, frontend on :3000, both started
+manually — no `.claude/launch.json` exists for this project yet, so the browser preview tool's
+`preview_start({name})` path isn't wired up; used `preview_start({url})` against a manually-started `npm
+run dev` instead): created a project, started an Analysis run, confirmed the generated Requirement
+Specification is genuinely tailored to the prompt (not templated) via the actual download endpoint,
+advanced through UX Design (both artefacts, including the interactive HTML prototype, rendering
+correctly), then specifically exercised the new reviewer picker — selected an existing reviewer, added a
+new one inline, confirmed it appeared and auto-selected, and completed the review to advance the phase.
+Also confirmed via curl that a bogus `reviewer_id` is now correctly rejected with a 409 and a clear
+message, and that a real one still succeeds.
+
+### Deferred / next
+
+- No `.claude/launch.json` for this project — future browser-tool sessions should add one (`npm run dev`
+  in `frontend/`) so `preview_start({name})` works instead of manually backgrounding `npm run dev`.
+- Local testing vs. a real deployment: still no Postgres, no Entra ID auth (reviewer identity is
+  self-asserted, not authenticated — the fix above closes the *data-integrity* gap, not an *auth* gap),
+  no Key Vault, no CI/CD, no M365/Graph adapters. All previously deferred and tracked, not blocking local
+  functional testing.
+
 ## Session 15 — 2026-08-11
 
 Completes the LLM rollout: the eleventh and final agent, Hypercare & Closure, is now `runtime: llm`.

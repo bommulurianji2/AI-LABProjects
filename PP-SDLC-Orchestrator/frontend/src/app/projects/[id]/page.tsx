@@ -5,7 +5,9 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { formatLabel } from "@/lib/format";
-import type { ArtefactVersion, Project, ReviewDecision, Run } from "@/lib/types";
+import type { ArtefactVersion, Project, ReviewDecision, Run, User } from "@/lib/types";
+
+const LAST_REVIEWER_STORAGE_KEY = "pp-sdlc-last-reviewer-id";
 
 const DECISIONS: { value: ReviewDecision; label: string }[] = [
   { value: "approved", label: "Approve" },
@@ -27,7 +29,14 @@ export default function ProjectWorkspacePage() {
   const [startingRun, setStartingRun] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
 
+  const [users, setUsers] = useState<User[]>([]);
+  const [usersError, setUsersError] = useState<string | null>(null);
   const [reviewerId, setReviewerId] = useState("");
+  const [showAddReviewer, setShowAddReviewer] = useState(false);
+  const [newReviewerEmail, setNewReviewerEmail] = useState("");
+  const [newReviewerRole, setNewReviewerRole] = useState("Reviewer");
+  const [addingReviewer, setAddingReviewer] = useState(false);
+  const [addReviewerError, setAddReviewerError] = useState<string | null>(null);
   const [decision, setDecision] = useState<ReviewDecision>("approved");
   const [comments, setComments] = useState("");
   const [submittingReview, setSubmittingReview] = useState(false);
@@ -61,6 +70,55 @@ export default function ProjectWorkspacePage() {
     };
   }, [projectId]);
 
+  useEffect(() => {
+    // Reviewers aren't project-scoped, so this loads once per page visit,
+    // independent of projectId. Restores the last-used reviewer from this
+    // browser (pure convenience for repeated manual testing — not an
+    // identity mechanism) so a tester doesn't re-pick themselves every run.
+    let ignore = false;
+    (async () => {
+      try {
+        const data = await api.listUsers();
+        if (ignore) return;
+        setUsers(data);
+        setUsersError(null);
+        const lastReviewerId = window.localStorage.getItem(LAST_REVIEWER_STORAGE_KEY);
+        if (lastReviewerId && data.some((u) => u.id === lastReviewerId)) {
+          setReviewerId(lastReviewerId);
+        } else if (data.length > 0) {
+          setReviewerId(data[0].id);
+        }
+      } catch (err) {
+        if (!ignore) {
+          setUsersError(err instanceof ApiError ? err.message : "Could not load reviewers.");
+        }
+      }
+    })();
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
+  async function handleAddReviewer(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newReviewerEmail.trim()) return;
+
+    setAddingReviewer(true);
+    setAddReviewerError(null);
+    try {
+      const user = await api.createUser(newReviewerEmail.trim(), newReviewerRole.trim() || "Reviewer");
+      setUsers((prev) => (prev.some((u) => u.id === user.id) ? prev : [...prev, user]));
+      setReviewerId(user.id);
+      window.localStorage.setItem(LAST_REVIEWER_STORAGE_KEY, user.id);
+      setNewReviewerEmail("");
+      setShowAddReviewer(false);
+    } catch (err) {
+      setAddReviewerError(err instanceof ApiError ? err.message : "Could not add reviewer.");
+    } finally {
+      setAddingReviewer(false);
+    }
+  }
+
   async function handleStartRun(e: React.FormEvent) {
     e.preventDefault();
     if (!taskRequest.trim()) return;
@@ -92,6 +150,7 @@ export default function ProjectWorkspacePage() {
         .map((line) => line.trim())
         .filter(Boolean);
       const updatedProject = await api.submitReview(run.id, reviewerId.trim(), decision, commentList);
+      window.localStorage.setItem(LAST_REVIEWER_STORAGE_KEY, reviewerId.trim());
       setProject(updatedProject);
       setRun(await api.getRun(run.id));
       setArtefactVersions(await api.getRunArtefactVersions(run.id)); // may have just been promoted to baseline
@@ -214,16 +273,58 @@ export default function ProjectWorkspacePage() {
           {awaitingReview && (
             <form onSubmit={handleSubmitReview} className="stack" style={{ marginTop: "1rem" }}>
               <h4>Submit review</h4>
+              {usersError && <p className="error">{usersError}</p>}
               <div className="field">
                 <label htmlFor="reviewer-id">Reviewer</label>
-                <input
-                  id="reviewer-id"
-                  value={reviewerId}
-                  onChange={(e) => setReviewerId(e.target.value)}
-                  placeholder="reviewer@example.test"
-                  disabled={submittingReview}
-                />
+                {users.length > 0 ? (
+                  <select
+                    id="reviewer-id"
+                    value={reviewerId}
+                    onChange={(e) => setReviewerId(e.target.value)}
+                    disabled={submittingReview}
+                  >
+                    {users.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.email} ({u.role})
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="muted">No reviewers yet — add one below.</p>
+                )}
+                <button type="button" onClick={() => setShowAddReviewer((v) => !v)} className="secondary">
+                  {showAddReviewer ? "Cancel" : "+ Add reviewer"}
+                </button>
               </div>
+
+              {showAddReviewer && (
+                <div className="field" style={{ border: "1px solid var(--border)", borderRadius: 6, padding: "0.75rem" }}>
+                  <div className="field">
+                    <label htmlFor="new-reviewer-email">New reviewer email</label>
+                    <input
+                      id="new-reviewer-email"
+                      value={newReviewerEmail}
+                      onChange={(e) => setNewReviewerEmail(e.target.value)}
+                      placeholder="reviewer@example.test"
+                      disabled={addingReviewer}
+                    />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="new-reviewer-role">Role</label>
+                    <input
+                      id="new-reviewer-role"
+                      value={newReviewerRole}
+                      onChange={(e) => setNewReviewerRole(e.target.value)}
+                      placeholder="Reviewer"
+                      disabled={addingReviewer}
+                    />
+                  </div>
+                  {addReviewerError && <p className="error">{addReviewerError}</p>}
+                  <button type="button" onClick={handleAddReviewer} disabled={addingReviewer || !newReviewerEmail.trim()}>
+                    {addingReviewer ? "Adding…" : "Add reviewer"}
+                  </button>
+                </div>
+              )}
               <div className="field">
                 <label htmlFor="decision">Decision</label>
                 <select

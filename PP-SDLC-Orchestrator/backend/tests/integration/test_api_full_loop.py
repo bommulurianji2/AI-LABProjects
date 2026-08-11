@@ -28,10 +28,16 @@ def test_full_orchestrated_loop_over_http(api_client):
     assert versions[0]["version_label"] == "v0.1"
     assert versions[0]["status"] == "draft"
 
-    # simulate a reviewer user existing (session-1 has no auth yet - pass a raw id)
+    # There's no auth yet, but reviewer_id must still resolve to a real User
+    # row (see OrchestratorService.submit_review) — create one via the API
+    # first, the same way the frontend's reviewer picker does.
+    user_resp = api_client.post("/users", json={"email": "reviewer@example.test", "role": "Reviewer"})
+    assert user_resp.status_code == 201
+    reviewer_id = user_resp.json()["id"]
+
     review_resp = api_client.post(
         f"/runs/{run['id']}/review",
-        json={"reviewer_id": "test-reviewer", "decision": "approved", "comments": ["Looks good"]},
+        json={"reviewer_id": reviewer_id, "decision": "approved", "comments": ["Looks good"]},
     )
     assert review_resp.status_code == 200
     updated_project = review_resp.json()
