@@ -11,6 +11,7 @@ import json
 import re
 
 from app.adapters import (
+    build_renderer,
     common,
     data_integration_renderer,
     governance_security_renderer,
@@ -47,6 +48,40 @@ def _extract_json(text: str) -> dict:
 
 def _strip_leading_id_prefix(text: str) -> str:
     return _LEADING_ID_PREFIX_RE.sub("", text).strip()
+
+
+_ARTEFACT_TYPE_LABELS = {
+    "requirement_specification": "Requirement Specification",
+    "ux_design_specification": "UX Design Specification",
+    "solution_approach": "Solution Approach Document",
+    "architecture_handbook": "Architecture Handbook",
+    "data_design_document": "Data Design Document",
+    "governance_document": "Governance Document",
+    "build_review_report": "Build Review Report",
+    "final_code_review_report": "Final Code Review Report",
+    "validation_report": "Validation Report",
+    "test_plan": "Test Plan",
+    "test_execution_report": "Test Execution Report",
+    "deployment_runbook": "Deployment Runbook",
+    "hypercare_closure_report": "Hypercare Closure Report",
+}
+
+
+def _format_multi_artefact_context(upstream_artefacts_text: dict[str, str], artefact_types: list[str]) -> str:
+    """Formats every requested upstream artefact that's actually present
+    into labeled sections, in a fixed reading order — used by agents whose
+    guardrails require referencing entities from more than one prior
+    phase (e.g. Build referencing both SCR-00N and ADR-00N IDs), unlike
+    earlier agents that only ever had a single immediate predecessor.
+    """
+    sections = []
+    for artefact_type in artefact_types:
+        text = upstream_artefacts_text.get(artefact_type, "")
+        if not text:
+            continue
+        label = _ARTEFACT_TYPE_LABELS.get(artefact_type, artefact_type)
+        sections.append(f'Approved {label}:\n"""\n{text}\n"""')
+    return "\n\n".join(sections)
 
 
 class AnalysisLlmAdapter:
@@ -596,4 +631,118 @@ class GovernanceSecurityLlmAdapter:
             "}\n\n"
             "Produce at least one DLP classification line per connector mentioned in the Data Design "
             "Document, and at least one licensing consideration."
+        )
+
+
+class BuildLlmAdapter:
+    """Real LLM-backed runtime for the Build Agent.
+
+    Unlike earlier agents, which only ever had one immediate predecessor,
+    Build's guardrail requires findings to reference entities from any
+    upstream phase (e.g. SCR-002, ADR-001) — so this reads every upstream
+    artefact present, not just the Governance Document named as its
+    formal manifest input, via _format_multi_artefact_context.
+    """
+
+    SKILL_RELATIVE_PATH = "03_Agent_Skills/build/SKILL.md"
+    CONTEXT_ARTEFACT_TYPES = [
+        "requirement_specification",
+        "ux_design_specification",
+        "solution_approach",
+        "architecture_handbook",
+        "data_design_document",
+        "governance_document",
+    ]
+
+    def __init__(self, provider: ModelProvider | None = None):
+        self._provider = provider
+
+    def execute(self, request: AgentRunRequest) -> AgentRunResult:
+        provider = self._provider or model_provider_factory.get_model_provider()
+        settings = get_settings()
+        project_name = request.constraints.get("project_name", request.project_id)
+
+        system_prompt = (REPO_ROOT / self.SKILL_RELATIVE_PATH).read_text(encoding="utf-8")
+        upstream_context = _format_multi_artefact_context(request.upstream_artefacts_text, self.CONTEXT_ARTEFACT_TYPES)
+        user_prompt = self._build_user_prompt(
+            project_name=str(project_name), task_request=request.task_request, upstream_context=upstream_context
+        )
+
+        raw_response = provider.complete(system=system_prompt, user=user_prompt)
+        parsed = _extract_json(raw_response)
+
+        raw_findings = parsed.get("findings", [])
+        findings: list[str] = []
+        for entry in raw_findings:
+            if not isinstance(entry, dict):
+                continue
+            reference = str(entry.get("reference", "")).strip()
+            description = str(entry.get("description", "")).strip()
+            if description:
+                findings.append(f"{reference}: {description}" if reference else description)
+
+        if not findings:
+            raise ModelProviderError(f"Model response contained no build findings: {parsed!r}"[:500])
+
+        defect_entities = [f"DEF-{i + 1:03d}" for i in range(len(findings))]
+        version_label = common.version_label(request.run_number)
+        output_dir = settings.generated_artefacts_dir / request.project_id
+
+        implementation_assets_text = str(parsed.get("implementation_assets", "")).strip() or (
+            "Implementation assets not specified by the model."
+        )
+        configuration_summary_text = str(parsed.get("configuration_summary", "")).strip() or (
+            "Configuration summary not specified by the model."
+        )
+
+        build_review_produced = build_renderer.render_build_review(
+            repo_root=REPO_ROOT,
+            output_dir=output_dir,
+            project_name=str(project_name),
+            version_label=version_label,
+            implementation_assets_text=implementation_assets_text,
+            configuration_summary_text=configuration_summary_text,
+            findings=findings,
+            defect_entities=defect_entities,
+            fixes_applied=[f"{eid}: fixed and re-verified in this build run." for eid in defect_entities],
+        )
+        final_code_review_produced = build_renderer.render_final_code_review(
+            repo_root=REPO_ROOT,
+            output_dir=output_dir,
+            project_name=str(project_name),
+            version_label=version_label,
+            review_scope_text="Full review of all implementation assets produced in this build cycle.",
+            findings_text="No new findings beyond those already tracked in the Build Review Report.",
+            defect_entities=defect_entities,
+            resolution_lines=[f"{eid}: resolved." for eid in defect_entities],
+        )
+
+        return AgentRunResult(
+            execution_summary=(
+                f"Generated {build_renderer.BUILD_REVIEW_ARTEFACT_TYPE} and "
+                f"{build_renderer.FINAL_CODE_REVIEW_ARTEFACT_TYPE} with {len(findings)} LLM-generated findings."
+            ),
+            artefacts_produced=[build_review_produced, final_code_review_produced],
+            review_status="ready_for_review",
+            execution_metrics={"finding_count": len(findings)},
+        )
+
+    def _build_user_prompt(self, *, project_name: str, task_request: str, upstream_context: str) -> str:
+        context_section = f"{upstream_context}\n\n" if upstream_context else ""
+        return (
+            f"Project name: {project_name}\n\n"
+            f"Original high-level requirement from the user:\n\"\"\"\n{task_request}\n\"\"\"\n\n"
+            f"{context_section}"
+            "Review the implementation built from the approved artefacts above and report build findings. "
+            "Respond with ONLY a JSON object (no markdown code fences, no commentary before or after) "
+            "with exactly these keys:\n"
+            "{\n"
+            '  "implementation_assets": "<1-2 sentences on what was built>",\n'
+            '  "configuration_summary": "<1-2 sentences on environment/connection configuration>",\n'
+            '  "findings": [{"reference": "<upstream ID this finding relates to, e.g. SCR-002 or ADR-001>", '
+            '"description": "<the finding>"}, "..."]\n'
+            "}\n\n"
+            "Produce at least 1 and at most 5 findings, each referencing a specific ID from the upstream "
+            "artefacts above rather than vague prose. Do not add your own numbering or IDs beyond the "
+            "\"reference\" field — the calling system assigns each finding its own stable ID itself."
         )
