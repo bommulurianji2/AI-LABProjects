@@ -3,6 +3,58 @@
 Living record of what's done, tested, deferred, and blocked. Update this every session — do not let it
 go stale.
 
+## Session 10 — 2026-08-11
+
+Continues the LLM rollout to the fifth agent, Governance & Security — the first agent whose output is
+almost entirely free text plus two short lists (DLP, licensing) rather than a dominant list of
+stable-ID entities, so it's the first real test of the pattern on a lighter-structure artefact.
+
+### Completed
+
+- Extracted `GovernanceSecurityMockAdapter`'s rendering into a shared `app/adapters/governance_security_renderer.py`
+  (single `render()` function taking every section as a plain text/list parameter — no entity IDs at all
+  for this agent, matching the template's shape).
+- **`GovernanceSecurityLlmAdapter`** (`llm_agent_adapter.py`): reads
+  `upstream_artefacts_text["data_design_document"]` so the DLP classification and connector governance
+  sections cover the actual connectors Data & Integration chose, not a generic list. Only the two
+  structured list fields (`dlp`, `licensing`) are required and raise `ModelProviderError` if empty; the
+  seven free-text fields each get a graceful per-field fallback string if the model omits one, since
+  there's no correctness invariant (like a missing entity) that would make a partial free-text response
+  actually wrong.
+- **`03_Agent_Skills/governance_security/manifest.yaml` now declares `runtime: llm`** — the fifth real
+  agent. `SKILL.md` updated with the same grounding guardrail and "Implementation note" pattern.
+- Extended `FakeModelProvider`'s default response with Governance & Security's schema keys (the seven
+  free-text fields plus `dlp` and `licensing` lists).
+
+### Process note (not a code bug, a repeat of session 9's environment issue)
+
+Manual verification again hit stale local server processes on port 8010 — this time two full python.exe
+processes existed simultaneously right after a single `nohup ... &` start, and killing the wrong one
+took the good one down with it. Fixed by using `netstat -ano | grep ":8010" | grep LISTENING` to find the
+PID that Windows actually has the port bound to, which is authoritative regardless of how many
+python.exe processes exist or which one wrote the "Started server process" log line. This is now the
+standard verification step: check the port owner via netstat, not the log or the shell job ID, before
+trusting a manual test run.
+
+### Tests executed (all passing — 352 backend tests, 7 new)
+
+- `test_governance_security_llm_adapter.py` (7 cases): real rendering from model content, upstream Data
+  Design Document context actually included in the prompt, graceful omission when no upstream text
+  exists, missing `dlp`/missing `licensing` each raise, a missing free-text field (`compliance`) falls
+  back to a placeholder string rather than raising, malformed JSON raises.
+
+### Manual verification with the real OpenRouter key
+
+Ran a full five-phase chain (Analysis → UX Design → Technical Design → Data & Integration → Governance &
+Security) for a fictitious "Community Garden Plot Manager" project. The generated Governance Document
+named the exact three connectors from that run's real Data Design Document (Dataverse, Power BI, Office
+365 Outlook) with individual DLP classifications for each, and cross-referenced real upstream IDs
+(`DATA-003`, `SCR-004`) — confirms grounding survives four hops.
+
+### Deferred / next
+
+- Remaining agents still on `runtime: mock`: Build, Validation/QA, Test, Deploy, Hypercare & Closure.
+
 ## Session 9 — 2026-08-11
 
 Continues the LLM rollout to the fourth agent, Data & Integration, and catches a real process-hygiene
