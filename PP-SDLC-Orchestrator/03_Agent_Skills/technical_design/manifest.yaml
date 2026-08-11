@@ -3,7 +3,7 @@ display_name: Technical Design Agent
 version: "0.1.0"
 kind: specialist
 phase: technical_design
-runtime: mock
+runtime: llm
 requires_review: true
 inputs:
   - artefact_type: ux_design_specification
@@ -14,4 +14,4 @@ outputs:
   - artefact_type: architecture_handbook
     template: 04_Templates/architecture_handbook.docx
 skill_entry: 03_Agent_Skills/technical_design/SKILL.md
-adapter: app.adapters.mock_agent_adapter:TechnicalDesignMockAdapter
+adapter: app.adapters.llm_agent_adapter:TechnicalDesignLlmAdapter

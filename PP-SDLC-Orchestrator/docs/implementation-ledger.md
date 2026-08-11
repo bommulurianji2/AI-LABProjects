@@ -3,6 +3,54 @@
 Living record of what's done, tested, deferred, and blocked. Update this every session — do not let it
 go stale.
 
+## Session 8 — 2026-08-11
+
+Continues the LLM rollout to the third agent, Technical Design — the first agent after UX Design, so it
+proves the upstream-context pattern generalizes past a single hop (Analysis → UX Design → Technical
+Design, each grounded in the one immediately before it).
+
+### Completed
+
+- Extracted `TechnicalDesignMockAdapter`'s rendering into a shared `app/adapters/technical_design_renderer.py`
+  (`render_solution_approach`/`render_architecture_handbook`), same pattern as the Analysis and UX Design
+  renderers — mock and LLM adapters differ only in where option/decision/risk content comes from.
+- **`TechnicalDesignLlmAdapter`** (`llm_agent_adapter.py`): reads
+  `upstream_artefacts_text["ux_design_specification"]` and includes it as real context in the prompt, so
+  architecture options, decisions, risks, and the logical architecture are grounded in what UX Design
+  actually decided (screens, navigation, responsive behavior) rather than the original one-line task
+  request. Requires at least 2 options (first is treated as the recommendation) and at least 1 decision,
+  raising `ModelProviderError` otherwise. Produces both artefacts (Solution Approach + Architecture
+  Handbook docx) from one model call.
+- **`03_Agent_Skills/technical_design/manifest.yaml` now declares `runtime: llm`** — the third real agent.
+  `SKILL.md` updated the same way as Analysis/UX Design's: added grounding + Power-Platform-specificity
+  guardrails, replaced the mock-only note with an "Implementation note" describing both runtimes.
+- Extended `FakeModelProvider`'s default response with Technical Design's schema keys (`options`,
+  `architecture_decisions`, `risks`, `limitations`, `dependencies`, `logical_architecture`,
+  `integration_overview`, `infrastructure_overview`) — same superset pattern as session 7, no per-agent
+  detection logic added to the fixture.
+
+### Tests executed (all passing — 339 backend tests, 8 new)
+
+- `test_technical_design_llm_adapter.py` (8 cases): real rendering of both artefacts from model content,
+  upstream UX Design context actually included in the prompt, graceful omission when no upstream text
+  exists, ID-prefix-stripping regression (`"ADR-1: ..."` → `"ADR-001: ..."`, not doubled), missing
+  `options`/`architecture_decisions` each raise, a single option (no real comparison) raises, malformed
+  JSON raises.
+
+### Manual verification with the real OpenRouter key
+
+Ran a full three-phase chain through a temporary local server (Analysis → approve → UX Design → approve
+→ Technical Design) for a fictitious "Facilities Booking Portal" project never seen in any prompt or
+pool. The generated Solution Approach and Architecture Handbook explicitly referenced details only
+present in the real UX Design output for that run (e.g. "the mobile hamburger menu and stacked filter
+layout described in the UX specification", a PCF-control workaround for the wireframe's time slot
+picker) — confirms the grounding is real, not templated, and that context survives two hops.
+
+### Deferred / next
+
+- Remaining agents still on `runtime: mock`: Data & Integration, Governance & Security, Build,
+  Validation/QA, Test, Deploy, Hypercare & Closure — same now-proven pattern applies to each.
+
 ## Session 7 — 2026-08-11
 
 Continues session 6's LLM rollout to the second agent, UX Design. This session also fixes a real

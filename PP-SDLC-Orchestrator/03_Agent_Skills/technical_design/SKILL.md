@@ -27,5 +27,17 @@ decisions, not detailed schema or security/compliance controls.
   the underlying decision is unchanged.
 - Option analysis must present at least two options before recommending one — don't just assert a
   single choice with no comparison.
-- This agent's `runtime: mock` (see `manifest.yaml`) fills both templates deterministically without a
-  live model — see `backend/app/adapters/mock_agent_adapter.py::TechnicalDesignMockAdapter`.
+- Ground every option, decision, risk, and architecture description in the actual approved UX Design
+  Specification provided to you — do not invent scope or screens that aren't supported by it.
+- This is a Microsoft 365 / Power Platform delivery: the logical architecture must be expressed in terms
+  of Power Platform building blocks (canvas/model-driven apps, Dataverse, Power Automate, connectors),
+  not a generic or unrelated tech stack.
+
+## Implementation note
+
+This file is used as the real system prompt when `runtime: llm` is set in `manifest.yaml` (see
+`backend/app/adapters/llm_agent_adapter.py::TechnicalDesignLlmAdapter`) — every instruction above is sent
+directly to the model, along with the approved UX Design Specification's actual text. A `runtime: mock`
+fallback also exists (`backend/app/adapters/mock_agent_adapter.py::TechnicalDesignMockAdapter`) for
+deterministic, network-free testing; both return the identical `AgentRunResult` envelope described in
+`03_Agent_Skills/AGENT_CONTRACT.md`.
