@@ -3,6 +3,74 @@
 Living record of what's done, tested, deferred, and blocked. Update this every session — do not let it
 go stale.
 
+## Session 17 — 2026-08-11
+
+Builds a real self-serve test UI on request: "who is logged in, what is the task, and the progress of
+the agents in a flow" plus a proper look and feel. Closes the last major frontend gap (no run history)
+and adds a design system, a persistent identity concept, and a visual lifecycle pipeline.
+
+### Completed
+
+- **`GET /projects/{id}/runs`** (run-history endpoint) — every run for a project across every phase, with
+  a computed `review_decision`, `artefact_types`, and (see below) `task_request` per run. Closes a gap
+  documented since session 1.
+- **`task_request` persistence**: logged into the existing `run_started` `RunEvent`'s `payload_json`
+  (no schema migration) since `AgentRun` never stored it; `list_project_runs` reads it back out. Verified
+  it survives a run that fails before completion — logged before the adapter is invoked, not derived from
+  anything the adapter produces.
+- **Frontend identity**: `CurrentUserProvider` (`lib/current-user-context.tsx`) replaces the old per-page
+  reviewer picker with one app-wide "acting as" identity, shown in a new sticky header
+  (`components/Header.tsx`, with its own inline "+ New" user form) and consumed directly by the review
+  form on the workspace page — a single source of truth instead of two that could drift.
+- **`PhasePipeline`** (`components/PhasePipeline.tsx`): a visual stepper over all 10 lifecycle phases —
+  done (green check) / current (indigo, amber if in rework) / upcoming (neutral) — mirroring
+  `app/domain/enums.py::LIFECYCLE_PHASES` by hand, same convention already used for the rest of the API
+  shape in `lib/types.ts`.
+- **Run history panel** on the workspace page: every run, its task text, state, review decision, and
+  (expandable) artefact download links — and the same data now *resumes an in-flight review after a page
+  refresh* instead of showing the old "not available in this browser session" dead end.
+- **Design system** (`globals.css`): real light/dark color palette, semantic status colors wired through
+  a new `format.ts::badgeClass()` helper (success/warning/danger/info/neutral) so the same state word
+  reads the same way everywhere, card shadows/radius, wider workspace layout.
+
+### Bugs found and fixed along the way
+
+1. **WatchFiles reload silently stopped picking up file changes** on this Windows/E:-drive setup — a
+   second batch of backend edits never took effect despite the reloader looking alive; confirmed via
+   `OPTIONS` showing only the old method set. Restarting from scratch (not investigating the watcher
+   further) resolved it — a real environment quirk to remember, not a code bug.
+2. **Stuck OS-level listening socket**: after killing the stale reloader, port 8000 stayed bound
+   ("only one usage of each socket address") even though `Get-Process`/`Get-CimInstance`/`taskkill` all
+   agreed the owning PID no longer existed. Worked around by moving the dev backend to port 8001 for this
+   session (`frontend/.env.local`, gitignored) rather than fighting an orphaned Windows socket.
+3. **A genuine transient network failure** (`WinError 10054`, connection forcibly closed) while calling
+   OpenRouter for a Technical Design run — not a bug, but exactly the kind of failure the new run-history
+   panel now makes visible and auditable instead of silently vanishing. The project's phase state wasn't
+   corrupted (failure happens before any phase transition in `start_run`), so retrying was just "start a
+   new run," which the UI already supported.
+
+### Tests executed (all passing — 402 backend tests, 5 new since session 16)
+
+- `test_run_history_api.py` gained a case proving `task_request` survives a failed run.
+- Frontend: `npx tsc --noEmit` and `npm run lint` clean.
+
+### Manual verification
+
+Full browser walkthrough on a real multi-phase project ("Guardrail Curl Check"): switched the header
+identity mid-session and confirmed the workspace page's "Running as" / "Reviewing as" text updated live;
+started a Data Integration run, watched the pipeline show "Awaiting Review" on the current dot with the
+task text visible in both the run card and history; submitted the review as the switched identity and
+watched the pipeline advance to Governance & Security with 4 green checks and the rest neutral, matching
+computed-style checks confirming the actual rendered colors (green `#16a34a` for done, indigo `#4f46e5`
+for current, neutral gray for upcoming).
+
+### Deferred / next
+
+- No `.claude/launch.json` for this project — a future session should add one so the browser tool's
+  `preview_start({name})` path works instead of manually backgrounding `npm run dev`.
+- The header's "acting as" identity is still self-asserted, not authenticated (no Entra ID yet) — this
+  session made identity *visible and consistent*, not *verified*.
+
 ## Session 16 — 2026-08-11
 
 Fixes a real gap found via manual browser smoke testing after the LLM rollout completed: with all 11
