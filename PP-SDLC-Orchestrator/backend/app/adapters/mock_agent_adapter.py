@@ -10,7 +10,7 @@ import hashlib
 from docx import Document
 from openpyxl import load_workbook
 
-from app.adapters import common, requirement_specification_renderer, ux_design_renderer
+from app.adapters import common, requirement_specification_renderer, technical_design_renderer, ux_design_renderer
 from app.agents_registry.contract import AgentRunRequest, AgentRunResult, ProducedArtefact
 from app.config import REPO_ROOT, get_settings
 
@@ -282,10 +282,8 @@ class TechnicalDesignMockAdapter:
     Architecture Handbook — both Word, per the authoritative artefact set.
     """
 
-    SOLUTION_APPROACH_ARTEFACT_TYPE = "solution_approach"
-    ARCHITECTURE_HANDBOOK_ARTEFACT_TYPE = "architecture_handbook"
-    SOLUTION_APPROACH_TEMPLATE_RELATIVE_PATH = "04_Templates/solution_approach.docx"
-    ARCHITECTURE_HANDBOOK_TEMPLATE_RELATIVE_PATH = "04_Templates/architecture_handbook.docx"
+    SOLUTION_APPROACH_ARTEFACT_TYPE = technical_design_renderer.SOLUTION_APPROACH_ARTEFACT_TYPE
+    ARCHITECTURE_HANDBOOK_ARTEFACT_TYPE = technical_design_renderer.ARCHITECTURE_HANDBOOK_ARTEFACT_TYPE
 
     def execute(self, request: AgentRunRequest) -> AgentRunResult:
         settings = get_settings()
@@ -307,11 +305,35 @@ class TechnicalDesignMockAdapter:
         risks = [RISK_POOL[(r_start + i) % len(RISK_POOL)] for i in range(2)]
 
         output_dir = settings.generated_artefacts_dir / request.project_id
-        solution_approach_produced = self._render_solution_approach(
-            project_name, version_label, options, decisions, adr_entities, risks, output_dir
+        solution_approach_produced = technical_design_renderer.render_solution_approach(
+            repo_root=REPO_ROOT,
+            output_dir=output_dir,
+            project_name=str(project_name),
+            version_label=version_label,
+            options=options,
+            decisions=decisions,
+            decision_entities=adr_entities,
+            risks=risks,
+            limitations=LIMITATION_POOL,
+            dependencies=DEPENDENCY_POOL,
         )
-        architecture_handbook_produced = self._render_architecture_handbook(
-            project_name, version_label, output_dir
+        architecture_handbook_produced = technical_design_renderer.render_architecture_handbook(
+            repo_root=REPO_ROOT,
+            output_dir=output_dir,
+            project_name=str(project_name),
+            version_label=version_label,
+            logical_architecture_text=(
+                "Power Platform canvas/model-driven app frontend, Dataverse as the system of "
+                "record, Power Automate for workflow orchestration."
+            ),
+            integration_overview_text=(
+                "External systems are integrated via dedicated custom connectors; no direct "
+                "HTTP calls from flows to third-party APIs."
+            ),
+            infrastructure_overview_text=(
+                "Dev/test/prod Power Platform environments with solution-based ALM; Azure "
+                "services (if any) sit behind the same connector layer."
+            ),
         )
 
         return AgentRunResult(
@@ -322,91 +344,6 @@ class TechnicalDesignMockAdapter:
             artefacts_produced=[solution_approach_produced, architecture_handbook_produced],
             review_status="ready_for_review",
             execution_metrics={"seed": seed, "adr_count": adr_count},
-        )
-
-    def _render_solution_approach(
-        self, project_name, version_label, options, decisions, adr_entities, risks, output_dir
-    ):
-        doc = Document(str(REPO_ROOT / self.SOLUTION_APPROACH_TEMPLATE_RELATIVE_PATH))
-        decision_lines = [
-            f"{eid}: {text}" for eid, text in zip(adr_entities, decisions, strict=True)
-        ]
-        for para in doc.paragraphs:
-            if "{{PROJECT_NAME}}" in para.text:
-                para.text = para.text.replace("{{PROJECT_NAME}}", str(project_name))
-            elif "{{VERSION_LABEL}}" in para.text:
-                para.text = para.text.replace("{{VERSION_LABEL}}", version_label)
-            elif "{{OPTION_ANALYSIS}}" in para.text:
-                para.text = ""
-                for name, tradeoff in options:
-                    doc.add_paragraph(f"Option — {name}: {tradeoff}")
-                doc.add_paragraph(f"Recommended: {options[0][0]}")
-            elif "{{ARCHITECTURE_DECISIONS}}" in para.text:
-                para.text = ""
-                for line in decision_lines:
-                    doc.add_paragraph(line)
-            elif "{{RISKS}}" in para.text:
-                para.text = ""
-                for risk in risks:
-                    doc.add_paragraph(risk)
-            elif "{{LIMITATIONS}}" in para.text:
-                para.text = ""
-                for limitation in LIMITATION_POOL:
-                    doc.add_paragraph(limitation)
-            elif "{{DEPENDENCIES}}" in para.text:
-                para.text = ""
-                for dependency in DEPENDENCY_POOL:
-                    doc.add_paragraph(dependency)
-
-        output_path_dir = output_dir / self.SOLUTION_APPROACH_ARTEFACT_TYPE
-        output_path_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_path_dir / f"{version_label}.docx"
-        doc.save(output_path)
-        checksum = hashlib.sha256(output_path.read_bytes()).hexdigest()
-
-        return ProducedArtefact(
-            artefact_type=self.SOLUTION_APPROACH_ARTEFACT_TYPE,
-            stable_key=self.SOLUTION_APPROACH_ARTEFACT_TYPE,
-            file_path=str(output_path),
-            checksum=checksum,
-            entities=list(adr_entities),
-        )
-
-    def _render_architecture_handbook(self, project_name, version_label, output_dir):
-        doc = Document(str(REPO_ROOT / self.ARCHITECTURE_HANDBOOK_TEMPLATE_RELATIVE_PATH))
-        for para in doc.paragraphs:
-            if "{{PROJECT_NAME}}" in para.text:
-                para.text = para.text.replace("{{PROJECT_NAME}}", str(project_name))
-            elif "{{VERSION_LABEL}}" in para.text:
-                para.text = para.text.replace("{{VERSION_LABEL}}", version_label)
-            elif "{{LOGICAL_ARCHITECTURE}}" in para.text:
-                para.text = (
-                    "Power Platform canvas/model-driven app frontend, Dataverse as the system of "
-                    "record, Power Automate for workflow orchestration."
-                )
-            elif "{{INTEGRATION_OVERVIEW}}" in para.text:
-                para.text = (
-                    "External systems are integrated via dedicated custom connectors; no direct "
-                    "HTTP calls from flows to third-party APIs."
-                )
-            elif "{{INFRASTRUCTURE_OVERVIEW}}" in para.text:
-                para.text = (
-                    "Dev/test/prod Power Platform environments with solution-based ALM; Azure "
-                    "services (if any) sit behind the same connector layer."
-                )
-
-        output_path_dir = output_dir / self.ARCHITECTURE_HANDBOOK_ARTEFACT_TYPE
-        output_path_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_path_dir / f"{version_label}.docx"
-        doc.save(output_path)
-        checksum = hashlib.sha256(output_path.read_bytes()).hexdigest()
-
-        return ProducedArtefact(
-            artefact_type=self.ARCHITECTURE_HANDBOOK_ARTEFACT_TYPE,
-            stable_key=self.ARCHITECTURE_HANDBOOK_ARTEFACT_TYPE,
-            file_path=str(output_path),
-            checksum=checksum,
-            entities=[],
         )
 
 
