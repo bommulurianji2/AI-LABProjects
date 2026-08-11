@@ -10,7 +10,13 @@ import hashlib
 import json
 import re
 
-from app.adapters import common, requirement_specification_renderer, technical_design_renderer, ux_design_renderer
+from app.adapters import (
+    common,
+    data_integration_renderer,
+    requirement_specification_renderer,
+    technical_design_renderer,
+    ux_design_renderer,
+)
 from app.adapters.model_providers import factory as model_provider_factory
 from app.adapters.model_providers.base import ModelProvider, ModelProviderError
 from app.agents_registry.contract import AgentRunRequest, AgentRunResult, ProducedArtefact
@@ -382,4 +388,116 @@ class TechnicalDesignLlmAdapter:
             f"the recommendation) and between {self.MIN_DECISIONS} and {self.MAX_DECISIONS} architecture "
             "decisions. Do not add your own numbering or IDs to option names or decisions — the calling "
             "system assigns stable IDs itself."
+        )
+
+
+class DataIntegrationLlmAdapter:
+    """Real LLM-backed runtime for the Data & Integration Agent.
+
+    Reads the upstream Solution Approach's actual text (see
+    OrchestratorService._gather_upstream_artefacts_text) so the Dataverse
+    schema and integration design are grounded in the architecture
+    decisions Technical Design actually made, not just the original task
+    request.
+    """
+
+    SKILL_RELATIVE_PATH = "03_Agent_Skills/data_integration/SKILL.md"
+    MIN_ENTITIES = 2
+    MAX_ENTITIES = 8
+
+    def __init__(self, provider: ModelProvider | None = None):
+        self._provider = provider
+
+    def execute(self, request: AgentRunRequest) -> AgentRunResult:
+        provider = self._provider or model_provider_factory.get_model_provider()
+        settings = get_settings()
+        project_name = request.constraints.get("project_name", request.project_id)
+
+        system_prompt = (REPO_ROOT / self.SKILL_RELATIVE_PATH).read_text(encoding="utf-8")
+        solution_approach_text = request.upstream_artefacts_text.get("solution_approach", "")
+        user_prompt = self._build_user_prompt(
+            project_name=str(project_name),
+            task_request=request.task_request,
+            solution_approach_text=solution_approach_text,
+        )
+
+        raw_response = provider.complete(system=system_prompt, user=user_prompt)
+        parsed = _extract_json(raw_response)
+
+        raw_entities = parsed.get("entities", [])
+        entities: list[tuple[str, str]] = []
+        for entry in raw_entities:
+            if not isinstance(entry, dict):
+                continue
+            name = _strip_leading_id_prefix(str(entry.get("name", ""))).strip()
+            description = str(entry.get("description", "")).strip()
+            if name and description:
+                entities.append((name, description))
+
+        if not entities:
+            raise ModelProviderError(f"Model response contained no Dataverse entities: {parsed!r}"[:500])
+
+        relationships = [str(r).strip() for r in parsed.get("relationships", []) if str(r).strip()]
+        external_sources = [str(s).strip() for s in parsed.get("external_sources", []) if str(s).strip()]
+        connectors = [str(c).strip() for c in parsed.get("connectors", []) if str(c).strip()]
+
+        entity_ids = [f"DATA-{i + 1:03d}" for i in range(len(entities))]
+        version_label = common.version_label(request.run_number)
+        output_dir = settings.generated_artefacts_dir / request.project_id
+
+        data_migration_text = str(parsed.get("data_migration", "")).strip() or (
+            "Data migration not specified by the model."
+        )
+        reporting_model_text = str(parsed.get("reporting_model", "")).strip() or (
+            "Reporting model not specified by the model."
+        )
+
+        produced = data_integration_renderer.render(
+            repo_root=REPO_ROOT,
+            output_dir=output_dir,
+            project_name=str(project_name),
+            version_label=version_label,
+            entities=entities,
+            entity_ids=entity_ids,
+            relationships=relationships or ["No relationships identified by the model."],
+            external_sources=external_sources or ["No external sources identified by the model."],
+            connectors=connectors or ["No connectors identified by the model."],
+            data_migration_text=data_migration_text,
+            reporting_model_text=reporting_model_text,
+        )
+
+        return AgentRunResult(
+            execution_summary=(
+                f"Generated {data_integration_renderer.ARTEFACT_TYPE} with "
+                f"{len(entities)} LLM-generated Dataverse entities."
+            ),
+            artefacts_produced=[produced],
+            review_status="ready_for_review",
+            execution_metrics={"entity_count": len(entities)},
+        )
+
+    def _build_user_prompt(self, *, project_name: str, task_request: str, solution_approach_text: str) -> str:
+        context_section = (
+            f'Approved Solution Approach Document for this project:\n"""\n{solution_approach_text}\n"""\n\n'
+            if solution_approach_text
+            else ""
+        )
+        return (
+            f"Project name: {project_name}\n\n"
+            f"Original high-level requirement from the user:\n\"\"\"\n{task_request}\n\"\"\"\n\n"
+            f"{context_section}"
+            "Design the Dataverse data model for this project, grounded in the Solution Approach above. "
+            "Respond with ONLY a JSON object (no markdown code fences, no commentary before or after) "
+            "with exactly these keys:\n"
+            "{\n"
+            '  "entities": [{"name": "<Entity Name>", "description": "<what it stores>"}, "..."],\n'
+            '  "relationships": ["<relationship 1, e.g. \'Booking N:1 Facility\'>", "..."],\n'
+            '  "external_sources": ["<external system and how it maps to Dataverse>", "..."],\n'
+            '  "connectors": ["<API or connector used>", "..."],\n'
+            '  "data_migration": "<1-2 sentences on migration approach, or state none is needed>",\n'
+            '  "reporting_model": "<1-2 sentences on the reporting approach, or state it is deferred>"\n'
+            "}\n\n"
+            f"Produce between {self.MIN_ENTITIES} and {self.MAX_ENTITIES} Dataverse entities and at least "
+            "one relationship between them. Do not add your own numbering or IDs to entity names — the "
+            "calling system assigns stable IDs itself."
         )

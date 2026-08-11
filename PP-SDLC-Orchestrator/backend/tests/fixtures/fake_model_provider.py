@@ -66,6 +66,16 @@ def _default_response() -> dict:
         "infrastructure_overview": (
             "Dev/test/prod Power Platform environments with solution-based ALM."
         ),
+        # Data & Integration
+        "entities": [
+            {"name": "Facility", "description": "A bookable room or desk with capacity and amenities."},
+            {"name": "Booking", "description": "A reservation of a Facility by an Employee for a time slot."},
+        ],
+        "relationships": ["Booking N:1 Facility", "Booking N:1 Employee"],
+        "external_sources": ["Azure Active Directory maps to the Employee table via object ID."],
+        "connectors": ["Office 365 Outlook connector for calendar invitations."],
+        "data_migration": "No legacy data migration is required for the initial release.",
+        "reporting_model": "Power BI reporting is deferred until reporting requirements are confirmed.",
     }
 
 

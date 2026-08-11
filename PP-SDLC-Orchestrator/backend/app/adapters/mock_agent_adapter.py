@@ -10,7 +10,13 @@ import hashlib
 from docx import Document
 from openpyxl import load_workbook
 
-from app.adapters import common, requirement_specification_renderer, technical_design_renderer, ux_design_renderer
+from app.adapters import (
+    common,
+    data_integration_renderer,
+    requirement_specification_renderer,
+    technical_design_renderer,
+    ux_design_renderer,
+)
 from app.agents_registry.contract import AgentRunRequest, AgentRunResult, ProducedArtefact
 from app.config import REPO_ROOT, get_settings
 
@@ -354,8 +360,7 @@ class DataIntegrationMockAdapter:
     schema, relationships, external-source mapping, and connector design.
     """
 
-    ARTEFACT_TYPE = "data_design_document"
-    TEMPLATE_RELATIVE_PATH = "04_Templates/data_design_document.docx"
+    ARTEFACT_TYPE = data_integration_renderer.ARTEFACT_TYPE
 
     def execute(self, request: AgentRunRequest) -> AgentRunResult:
         settings = get_settings()
@@ -375,48 +380,19 @@ class DataIntegrationMockAdapter:
         rel_start = seed % len(RELATIONSHIP_POOL)
         relationships = [RELATIONSHIP_POOL[(rel_start + i) % len(RELATIONSHIP_POOL)] for i in range(2)]
 
-        doc = Document(str(REPO_ROOT / self.TEMPLATE_RELATIVE_PATH))
-        entity_lines = [
-            f"{eid}: {name} — {desc}" for eid, (name, desc) in zip(data_entities, entities_chosen, strict=True)
-        ]
-        for para in doc.paragraphs:
-            if "{{PROJECT_NAME}}" in para.text:
-                para.text = para.text.replace("{{PROJECT_NAME}}", str(project_name))
-            elif "{{VERSION_LABEL}}" in para.text:
-                para.text = para.text.replace("{{VERSION_LABEL}}", version_label)
-            elif "{{DATAVERSE_SCHEMA}}" in para.text:
-                para.text = ""
-                for line in entity_lines:
-                    doc.add_paragraph(line)
-            elif "{{RELATIONSHIPS}}" in para.text:
-                para.text = ""
-                for rel in relationships:
-                    doc.add_paragraph(rel)
-            elif "{{EXTERNAL_SOURCES}}" in para.text:
-                para.text = ""
-                for src in EXTERNAL_SOURCE_POOL:
-                    doc.add_paragraph(src)
-            elif "{{CONNECTORS}}" in para.text:
-                para.text = ""
-                for conn in CONNECTOR_POOL:
-                    doc.add_paragraph(conn)
-            elif "{{DATA_MIGRATION}}" in para.text:
-                para.text = "No legacy data migration in scope for this mock run."
-            elif "{{REPORTING_MODEL}}" in para.text:
-                para.text = "Power BI reporting deferred until reporting requirements are confirmed."
-
-        output_dir = settings.generated_artefacts_dir / request.project_id / self.ARTEFACT_TYPE
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / f"{version_label}.docx"
-        doc.save(output_path)
-        checksum = hashlib.sha256(output_path.read_bytes()).hexdigest()
-
-        produced = ProducedArtefact(
-            artefact_type=self.ARTEFACT_TYPE,
-            stable_key=self.ARTEFACT_TYPE,
-            file_path=str(output_path),
-            checksum=checksum,
-            entities=data_entities,
+        output_dir = settings.generated_artefacts_dir / request.project_id
+        produced = data_integration_renderer.render(
+            repo_root=REPO_ROOT,
+            output_dir=output_dir,
+            project_name=str(project_name),
+            version_label=version_label,
+            entities=entities_chosen,
+            entity_ids=data_entities,
+            relationships=relationships,
+            external_sources=EXTERNAL_SOURCE_POOL,
+            connectors=CONNECTOR_POOL,
+            data_migration_text="No legacy data migration in scope for this mock run.",
+            reporting_model_text="Power BI reporting deferred until reporting requirements are confirmed.",
         )
 
         return AgentRunResult(
