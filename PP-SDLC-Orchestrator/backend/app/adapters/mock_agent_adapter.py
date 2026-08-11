@@ -13,6 +13,7 @@ from app.adapters import (
     build_renderer,
     common,
     data_integration_renderer,
+    deploy_renderer,
     governance_security_renderer,
     requirement_specification_renderer,
     technical_design_renderer,
@@ -623,8 +624,7 @@ class DeployMockAdapter:
     components" guardrail.
     """
 
-    ARTEFACT_TYPE = "iq_document"
-    TEMPLATE_RELATIVE_PATH = "04_Templates/iq_document.docx"
+    ARTEFACT_TYPE = deploy_renderer.ARTEFACT_TYPE
 
     def execute(self, request: AgentRunRequest) -> AgentRunResult:
         settings = get_settings()
@@ -632,33 +632,28 @@ class DeployMockAdapter:
         version_label = _version_label(request.run_number)
         project_name = request.constraints.get("project_name", request.project_id)
 
-        doc = Document(str(REPO_ROOT / self.TEMPLATE_RELATIVE_PATH))
-        for para in doc.paragraphs:
-            if "{{PROJECT_NAME}}" in para.text:
-                para.text = para.text.replace("{{PROJECT_NAME}}", str(project_name))
-            elif "{{VERSION_LABEL}}" in para.text:
-                para.text = para.text.replace("{{VERSION_LABEL}}", version_label)
-            elif "{{DEPLOYMENT_CONFIGURATION}}" in para.text:
-                para.text = "Solution deployed via Power Platform CLI import into the target environment, driven by the approved connection references and environment variables."
-            elif "{{PRE_DEPLOYMENT_VERIFICATION}}" in para.text:
-                para.text = "Verified: the Test Workbook's Defects sheet shows zero open defects for this version. Deployment does not proceed if this check fails."
-            elif "{{ROLLBACK_PLAN}}" in para.text:
-                para.text = "Prior solution version remains installed and can be re-activated; no destructive schema changes are applied without a separate approved migration step."
-            elif "{{DEPLOYMENT_EVIDENCE}}" in para.text:
-                para.text = "Deployment evidence (solution import log, environment snapshot) is attached per the organization's evidence retention policy."
-
-        output_dir = settings.generated_artefacts_dir / request.project_id / self.ARTEFACT_TYPE
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / f"{version_label}.docx"
-        doc.save(output_path)
-        checksum = hashlib.sha256(output_path.read_bytes()).hexdigest()
-
-        produced = ProducedArtefact(
-            artefact_type=self.ARTEFACT_TYPE,
-            stable_key=self.ARTEFACT_TYPE,
-            file_path=str(output_path),
-            checksum=checksum,
-            entities=[],
+        output_dir = settings.generated_artefacts_dir / request.project_id
+        produced = deploy_renderer.render(
+            repo_root=REPO_ROOT,
+            output_dir=output_dir,
+            project_name=str(project_name),
+            version_label=version_label,
+            deployment_configuration_text=(
+                "Solution deployed via Power Platform CLI import into the target environment, driven "
+                "by the approved connection references and environment variables."
+            ),
+            pre_deployment_verification_text=(
+                "Verified: the Test Workbook's Defects sheet shows zero open defects for this version. "
+                "Deployment does not proceed if this check fails."
+            ),
+            rollback_plan_text=(
+                "Prior solution version remains installed and can be re-activated; no destructive "
+                "schema changes are applied without a separate approved migration step."
+            ),
+            deployment_evidence_text=(
+                "Deployment evidence (solution import log, environment snapshot) is attached per the "
+                "organization's evidence retention policy."
+            ),
         )
 
         return AgentRunResult(
