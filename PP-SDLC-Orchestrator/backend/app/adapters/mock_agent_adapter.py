@@ -18,6 +18,7 @@ from app.adapters import (
     requirement_specification_renderer,
     technical_design_renderer,
     ux_design_renderer,
+    validation_qa_renderer,
 )
 from app.agents_registry.contract import AgentRunRequest, AgentRunResult, ProducedArtefact
 from app.config import REPO_ROOT, get_settings
@@ -529,8 +530,7 @@ class ValidationQaMockAdapter:
     findings, each citing an upstream entity, plus an overall verdict.
     """
 
-    ARTEFACT_TYPE = "validation_report"
-    TEMPLATE_RELATIVE_PATH = "04_Templates/validation_report.docx"
+    ARTEFACT_TYPE = validation_qa_renderer.ARTEFACT_TYPE
 
     def execute(self, request: AgentRunRequest) -> AgentRunResult:
         settings = get_settings()
@@ -546,35 +546,20 @@ class ValidationQaMockAdapter:
             VALIDATION_FINDING_POOL[(f_start + i) % len(VALIDATION_FINDING_POOL)] for i in range(finding_count)
         ]
 
-        doc = Document(str(REPO_ROOT / self.TEMPLATE_RELATIVE_PATH))
-        for para in doc.paragraphs:
-            if "{{PROJECT_NAME}}" in para.text:
-                para.text = para.text.replace("{{PROJECT_NAME}}", str(project_name))
-            elif "{{VERSION_LABEL}}" in para.text:
-                para.text = para.text.replace("{{VERSION_LABEL}}", version_label)
-            elif "{{VALIDATION_SCOPE}}" in para.text:
-                para.text = "Independent validation of all approved design and build artefacts for this project."
-            elif "{{STANDARDS_ASSESSMENT}}" in para.text:
-                para.text = "Assessed against accessibility, naming convention, and traceability standards."
-            elif "{{VALIDATION_FINDINGS}}" in para.text:
-                para.text = ""
-                for finding in findings:
-                    doc.add_paragraph(finding)
-            elif "{{OVERALL_VERDICT}}" in para.text:
-                para.text = "Pass with findings — see above; no critical defects block progression."
-
-        output_dir = settings.generated_artefacts_dir / request.project_id / self.ARTEFACT_TYPE
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / f"{version_label}.docx"
-        doc.save(output_path)
-        checksum = hashlib.sha256(output_path.read_bytes()).hexdigest()
-
-        produced = ProducedArtefact(
-            artefact_type=self.ARTEFACT_TYPE,
-            stable_key=self.ARTEFACT_TYPE,
-            file_path=str(output_path),
-            checksum=checksum,
-            entities=[],
+        output_dir = settings.generated_artefacts_dir / request.project_id
+        produced = validation_qa_renderer.render(
+            repo_root=REPO_ROOT,
+            output_dir=output_dir,
+            project_name=str(project_name),
+            version_label=version_label,
+            validation_scope_text=(
+                "Independent validation of all approved design and build artefacts for this project."
+            ),
+            standards_assessment_text=(
+                "Assessed against accessibility, naming convention, and traceability standards."
+            ),
+            findings=findings,
+            overall_verdict_text="Pass with findings — see above; no critical defects block progression.",
         )
 
         return AgentRunResult(
