@@ -25,5 +25,15 @@ none are open before declaring closure.
   IQ Document's pre-deployment verification) — do not close silently without that check.
 - This is the last lifecycle phase: approving this artefact sets the project's overall status to
   `completed` (see `app/orchestrator/state_machines.py::advance_phase`).
-- This agent's `runtime: mock` (see `manifest.yaml`) fills the template deterministically without a live
-  model — see `backend/app/adapters/mock_agent_adapter.py::HypercareClosureMockAdapter`.
+
+## Implementation note
+
+This file is used as the real system prompt when `runtime: llm` is set in `manifest.yaml` (see
+`backend/app/adapters/llm_agent_adapter.py::HypercareClosureLlmAdapter`) — every instruction above is
+sent directly to the model, along with every upstream artefact's actual text, including the IQ Document's
+pre-deployment verification. Unlike the Deploy Agent, this agent does not re-gate on defects (Deploy
+already refused to proceed if any were open) — it must simply never produce an empty closure statement,
+which the adapter enforces by raising rather than rendering silently. A `runtime: mock` fallback also
+exists (`backend/app/adapters/mock_agent_adapter.py::HypercareClosureMockAdapter`) for deterministic,
+network-free testing; both return the identical `AgentRunResult` envelope described in
+`03_Agent_Skills/AGENT_CONTRACT.md`.
