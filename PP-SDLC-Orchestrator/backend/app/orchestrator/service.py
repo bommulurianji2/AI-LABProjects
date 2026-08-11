@@ -4,11 +4,14 @@ DB state directly; only this service does, via the state machines in
 `state_machines.py`.
 """
 
+import logging
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 
 from sqlalchemy.orm import Session
 
+from app.adapters import document_text
 from app.agents_registry.contract import AgentRunRequest
 from app.agents_registry.manifest_schema import AgentManifest
 from app.agents_registry.registry import AgentRegistry
@@ -18,6 +21,8 @@ from app.models.artefact import Artefact, ArtefactVersion
 from app.models.project import Project
 from app.models.review import Review, ReviewComment
 from app.orchestrator.state_machines import advance_phase, transition_run
+
+logger = logging.getLogger(__name__)
 
 
 class OrchestrationError(Exception):
@@ -53,6 +58,27 @@ class OrchestratorService:
 
     def _log_event(self, run: AgentRun, event_type: str, payload: str = "{}") -> None:
         self.session.add(RunEvent(run_id=run.id, ts=datetime.now(UTC), type=event_type, payload_json=payload))
+
+    def _gather_upstream_artefacts_text(self, project_id: str) -> dict[str, str]:
+        """Extracted text of every baseline (approved) artefact version for
+        this project so far, keyed by artefact_type. A missing/unreadable
+        file is skipped with a warning rather than failing the run — this
+        is best-effort context, not a hard dependency.
+        """
+        baseline_versions = (
+            self.session.query(ArtefactVersion, Artefact)
+            .join(Artefact, ArtefactVersion.artefact_id == Artefact.id)
+            .filter(Artefact.project_id == project_id, ArtefactVersion.status == ArtefactVersionStatus.BASELINE.value)
+            .all()
+        )
+
+        upstream_text: dict[str, str] = {}
+        for version, artefact in baseline_versions:
+            try:
+                upstream_text[artefact.artefact_type] = document_text.extract_text(Path(version.file_path))
+            except (OSError, ValueError) as exc:
+                logger.warning("Could not extract upstream text from %s: %s", version.file_path, exc)
+        return upstream_text
 
     def start_run(self, project: Project, *, task_request: str, project_name_hint: str | None = None) -> AgentRun:
         """Runs the current phase's agent to completion of the mock work and
@@ -99,6 +125,7 @@ class OrchestratorService:
             agent_id=entry.manifest.id,
             task_id=str(uuid.uuid4()),
             task_request=task_request,
+            upstream_artefacts_text=self._gather_upstream_artefacts_text(project.id),
             lifecycle_phase=project.current_phase,
             constraints={"project_name": project_name_hint or project.name},
             run_number=run_number,

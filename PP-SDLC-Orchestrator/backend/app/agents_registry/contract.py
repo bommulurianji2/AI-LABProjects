@@ -26,6 +26,12 @@ class AgentRunRequest:
     task_request: str
     lifecycle_phase: str | None
     source_artefacts: list[SourceArtefactRef] = field(default_factory=list)
+    # Extracted text of every baseline artefact approved so far in this
+    # project, keyed by artefact_type — populated by OrchestratorService
+    # from the actual approved files, not just repeated from task_request.
+    # This is what lets a downstream agent (e.g. UX Design) build on what
+    # an upstream agent (e.g. Analysis) actually decided.
+    upstream_artefacts_text: dict[str, str] = field(default_factory=dict)
     reference_documents: list[str] = field(default_factory=list)
     constraints: dict[str, Any] = field(default_factory=dict)
     requested_outputs: list[str] = field(default_factory=list)
