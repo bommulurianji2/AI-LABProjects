@@ -89,6 +89,12 @@ def _default_response() -> dict:
         "compliance": "No regulated data categories identified for this fake-provider test run.",
         "operational_ownership": "Platform Administrator owns environment health; Project Owner owns escalation.",
         "audit_requirements": "All approval and rework events are captured in the audit log.",
+        # Build
+        "implementation_assets": "Canvas app screens, Dataverse solution, and Power Automate flows built.",
+        "configuration_summary": "Environment variables and connection references configured per governance.",
+        "findings": [
+            {"reference": "SCR-002", "description": "Request Form screen was missing client-side validation."},
+        ],
     }
 
 

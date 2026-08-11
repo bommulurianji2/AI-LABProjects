@@ -3,6 +3,55 @@
 Living record of what's done, tested, deferred, and blocked. Update this every session — do not let it
 go stale.
 
+## Session 11 — 2026-08-11
+
+Continues the LLM rollout to the sixth agent, Build — the first agent whose guardrail explicitly
+requires citing entities from *any* upstream phase (e.g. `SCR-002`, `ADR-001`), not just its formal
+manifest input (the Governance Document), so this is the first real generalization of the
+upstream-context pattern beyond "read my one immediate predecessor."
+
+### Completed
+
+- Extracted `BuildMockAdapter`'s rendering into a shared `app/adapters/build_renderer.py`
+  (`render_build_review`/`render_final_code_review`), same two-artefact pattern as Technical Design and
+  UX Design.
+- Added `_format_multi_artefact_context()` to `llm_agent_adapter.py` — a small shared helper (plus an
+  `_ARTEFACT_TYPE_LABELS` lookup covering every artefact type in the system so far) that formats
+  whichever upstream artefacts are actually present into labeled sections, in a fixed reading order. This
+  is now the pattern for any agent whose prompt needs more than one upstream artefact — earlier agents
+  used a single `upstream_artefacts_text.get("...")` call because they only ever had one immediate
+  predecessor; Build is the first to need several at once.
+- **`BuildLlmAdapter`** (`llm_agent_adapter.py`): reads all six prior artefact types (Requirement
+  Specification, UX Design Specification, Solution Approach, Architecture Handbook, Data Design
+  Document, Governance Document) via the new helper, so findings can cite whichever upstream ID is
+  actually relevant. Requires at least one finding, raising `ModelProviderError` otherwise; a finding
+  with no `reference` gracefully falls back to its description alone rather than failing.
+- **`03_Agent_Skills/build/manifest.yaml` now declares `runtime: llm`** — the sixth real agent. `SKILL.md`
+  updated with the same grounding guardrail and an "Implementation note" explicitly calling out that this
+  agent reads more than its formal manifest input.
+- Extended `FakeModelProvider`'s default response with Build's schema keys (`implementation_assets`,
+  `configuration_summary`, `findings`).
+
+### Tests executed (all passing — 358 backend tests, 6 new)
+
+- `test_build_llm_adapter.py` (6 cases): real rendering of both artefacts from model content, multiple
+  upstream artefacts (UX Design + Technical Design + Governance) all actually present in the prompt
+  together, graceful omission when no upstream text exists, missing-findings raises, a reference-less
+  finding falls back to description-only, malformed JSON raises.
+
+### Manual verification with the real OpenRouter key
+
+Ran a full six-phase chain (Analysis → UX Design → Technical Design → Data & Integration → Governance &
+Security → Build) for a fictitious "Library Room Reservation" project. The generated Build Review Report
+findings each cited a real upstream ID from a *different* phase in the same run — `ADR-003` (Technical
+Design), `SCR-003`/`SCR-002`/`SCR-005` (UX Design), `REQ-006` (Analysis), and `DATA-004` (Data &
+Integration) — with concrete, plausible Power Platform delegation/concurrency issues tied to each,
+confirming the multi-artefact context genuinely reaches the model and gets used, not just included.
+
+### Deferred / next
+
+- Remaining agents still on `runtime: mock`: Validation/QA, Test, Deploy, Hypercare & Closure.
+
 ## Session 10 — 2026-08-11
 
 Continues the LLM rollout to the fifth agent, Governance & Security — the first agent whose output is
